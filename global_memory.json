@@ -1,0 +1,28 @@
+{
+  "score_history": [
+    3,
+    4,
+    4
+  ],
+  "lessons_learned": [
+    "1. Načítání dat: Vždy používej přesnou cestu k souboru ze složky 'data/' a přesné názvy sloupců z přehledu (např. 'U_f,mean [V]').",
+    "2. Vícenásobná data: Pokud má Excel více listů, načti je přes `pd.read_excel('data/...', sheet_name=None)` a proiteruj v cyklu `for nazev, df in sheets.items():`.",
+    "3. Quarto a Python výstupy: Každý spustitelný Python blok musí začínat magickým komentářem `#| results: asis` a výstupy formátuj výhradně přes `display(Markdown(...))`. Zakázáno je obyčejné `display(df)` (použij `df.to_markdown(index=False)`).",
+    "4. Zákaz f-stringů mimo Python: V běžném Markdown textu mimo Python bloky nepoužívej f-stringy (žádné `{promenna}`).",
+    "5. Formátování textu Diskuze a Závěru: Tyto sekce generuj přímo z Pythonu pomocí `display(Markdown(rf\"...\"))` tak, aby se dynamicky dosadily reálné hodnoty z tabulky. Nikdy nenechávej prázdná místa '...' ani 'DOPLŇ'.",
+    "6. Zákaz seznamů v Závěru: Sekce 'Závěr' nesmí obsahovat žádné odrážky, seznamy ani číslování (1., 2.). Musí jít o souvislý odstavec textu.",
+    "7. LaTeX a f-stringy v Pythonu: Pokud řetězec v Pythonu obsahuje LaTeX (např. $\\Omega$), musí být zapsán jako raw f-string (`rf\"...\"`). Všechny LaTeXové složené závorky uvnitř f-stringů musíte bezpodmínečně zdvojit (např. `$r_{{\\mathrm{{d}}}}$`), nebo psát proměnné bez závorek. V názvech sloupců tabulky nikdy nepoužívej LaTeX.",
+    "8. Matematická syntaxe: Pro matematiku používej výhradně dolary (`$...$` pro inline, `$$...$$` pro blokovou). Nikdy nepoužívej `\\(`, `\\)`, `\\[`, ani `\\]`.",
+    "9. Grafy v Matplotlibu: Používej pouze čistý Matplotlib (žádný import seabornu). Styl nastav přes `plt.style.use('seaborn-v0_8-whitegrid')`. Nikdy nepoužívej `plt.savefig()` ani `plt.close()` – Quarto grafy zachytí samo přes `plt.show()`. Grafy generuj v cyklu samostatně (max 2 na stránku, žádné obří mřížky).",
+    "10. Tabulky: Před výpisem tabulky přes `to_markdown()` zaokrouhli číselné sloupce na 3 desetinná místa pomocí `df = df.round(3)`.",
+    "Při načítání dat MUSÍŠ použít PŘESNOU cestu k souboru ze složky 'data/' a PŘESNÉ názvy sloupců z přehledu.",
+    "Aby Quarto vypsalo Markdown z Pythonu, přidej na začátek bloku '#| results: asis' a použij 'display(Markdown(rf\"...\"))'. Obyčejné display(df) je zakázané.",
+    "Uvnitř Python f-stringů (rf\"...\") MUSÍŠ VŠECHNY LaTeXové složené závorky ZDVOJIT (např. $r_{{\\mathrm{{d}}}}$) nebo psát bez závorek ($r_d$).",
+    "Pro matematiku používej VÝHRADNĚ dolary ($...$ a $$...$$). NIKDY nepoužívej \\(,\\), [, ].",
+    "Před výpisem tabulky zaokrouhli hodnoty na 3 desetinná místa pomocí df = df.round(3).",
+    "Sekce 'Diskuze' i 'Závěr' vypisuj přes display(Markdown(rf\"...\")) přímo z Pythonu s dosazenými reálnými hodnotami z tabulky!",
+    "Sekce 'Závěr' NESMÍ obsahovat žádné odrážky ani číslování (1., 2.). Musí jít o souvislý odstavec textu.",
+    "V Matplotlibu NIKDY nepoužívej zastaralý styl 'seaborn-whitegrid' (použij 'seaborn-v0_8-whitegrid')."
+  ],
+  "gold_code_example": ""
+}

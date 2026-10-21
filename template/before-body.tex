@@ -1,0 +1,32 @@
+\begin{titlepage}
+        \centering
+        \IfFileExists{../../template/FEKT_logo.jpg}{
+            \includegraphics[width=0.85\textwidth]{../../template/FEKT_logo.jpg}\par\vspace{1cm}
+        }{
+            {\scshape\Large Vysoké učení technické v Brně \par}
+            \vspace{0.2cm}
+            {\scshape\large Fakulta elektrotechniky a komunikačních technologií \par}
+            \vspace{0.4cm}
+            \hrule
+            \vspace{1.2cm}
+        }
+        {\scshape\LARGE $predmet$ \par}
+        \vspace{0.5cm}
+        {\scshape\Large $kod_predmetu$ \par}
+        \vspace{1.5cm}
+        {\huge\bfseries Laboratorní úloha č. $cislo_ulohy$ \par}
+        \vspace{2.5cm}
+        {\huge\bfseries $title$ \par}
+        \vfill
+        \begin{flushleft}
+            \large
+            \textbf{Vypracoval:} $author$ ($student_id$) \hfill \textbf{Datum měření:} $datum_mereni$ \\
+            $if(spolupracoval)$
+            \textbf{Spolupracoval:} $spolupracoval$ \hfill \textbf{Datum odevzdání:} \today
+            $endif$
+        \end{flushleft}
+    \end{titlepage}
+    \newpage
+    \justifying
+    \onehalfspacing
+    

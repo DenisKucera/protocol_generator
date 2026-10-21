@@ -1,0 +1,9 @@
+\usepackage{ragged2e}
+\usepackage{setspace}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{needspace}
+\usepackage{etoolbox}
+\preto{\section}{\needspace{6cm}}
+\providetoggle{nobreak}
+\appto{\tabular}{\toggletrue{nobreak}}
