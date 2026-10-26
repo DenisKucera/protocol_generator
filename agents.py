@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from pathlib import Path
 from autogen import ConversableAgent
 
@@ -43,14 +44,20 @@ class DataAnalystAgent(BaseLabAgent):
     def __init__(self, config_list: list, valid_files: list[str], task_rules: list[str]):
         rules_str = "\n".join([f"- {r}" for r in task_rules])
         sys_msg = f"""Jsi Python Data Scientist pro laboratorní měření na VUT FEKT.
-        Tvým jediným úkolem je napsat samostatný, spustitelný Python skript (čistý kód bez Markdown textu okolo).
-        Skript musí:
-        1. Načíst data ze souboru {valid_files}.
-        2. Provést výpočty podle pravidel úlohy a uložit souhrnnou tabulku výsledků (zaokrouhlenou na 3 des. místa) jako JSON seznam slovníků do 'processed/summary.json' (orient='records', force_ascii=False, indent=2).
-        3. Pro každé měření vykreslit graf pomocí Matplotlibu (`plt.style.use('seaborn-v0_8-whitegrid')`) a uložit ho jako PDF do 'processed/graf_<nazev>.pdf' pomocí `plt.savefig(..., bbox_inches='tight')` a `plt.close()`.
+    Tvým jediným úkolem je napsat samostatný, spustitelný Python skript (čistý kód bez Markdown textu okolo).
 
-        PRAVIDLA VÝPOČTU A GRAFŮ PRO TUTO ÚLOHU:
-        {rules_str}"""
+    KRITICKÁ PRAVIDLA PRO BEZCHYBNÉ NAČTENÍ EXCELU (ZABRAŇUJE TypeError a ValueError):
+    1. Vstupní Excely mohou mít nadpisy na více řádcích, jednotky pod hlavičkou nebo více tabulek vedle sebe. Pečlivě si prohlédni dodanou ukázku surových buněk (`header=None`)!
+    2. Při extrakci jakéhokoliv sloupce z DataFrame jej VŽDY nejprve převeď na čistá čísla (tím se automaticky zahodí textové řádky s jednotkami, nadpisy i prázdné buňky):
+       `col_num = pd.to_numeric(df.iloc[:, col_idx].astype(str).str.replace(',', '.'), errors='coerce')`
+       a spárované sloupce (např. U a I) očisti od NaN společně: `valid = (~U.isna()) & (~I.isna()); U = U[valid].to_numpy(); I = I[valid].to_numpy()`.
+    3. NIKDY nepoužívej v kódu `raise ValueError(...)` ani `raise RuntimeError(...)` při hledání názvů sloupců! Pokud názvy sloupců neodpovídají, vyber sloupce přímo podle jejich číselného indexu (`df.iloc[:, idx]`) viditelného v surové ukázce dat!
+    4. Pro výpočty a regresi používej výhradně `numpy` a `pandas` (např. `np.polyfit`), NIKDY neimportuj `scipy`.
+    5. Ulož souhrnnou tabulku výsledků (zaokrouhlenou na 3 des. místa) jako JSON seznam slovníků do 'processed/summary.json' (`orient='records'`, `force_ascii=False`, `indent=2`).
+    6. Vykresli grafy pomocí Matplotlibu (`plt.style.use('seaborn-v0_8-whitegrid')`) a ulož je jako PDF do 'processed/graf_<nazev>.pdf' pomocí `plt.savefig(..., bbox_inches='tight')` a `plt.close()`.
+
+    PRAVIDLA VÝPOČTU A GRAFŮ PRO TUTO ÚLOHU:
+    {rules_str}"""
         super().__init__(name="Data_Analyst", system_message=sys_msg, config_list=config_list, max_tokens=4096)
 
     def execute(self, zadani_text: str, data_info: str, max_retries: int = 3) -> bool:
@@ -65,10 +72,33 @@ class DataAnalystAgent(BaseLabAgent):
             with open("process_data.py", "w", encoding="utf-8") as f:
                 f.write(code)
 
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
             # Samostatné spuštění a otestování skriptu
-            res = subprocess.run(["python", "process_data.py"], capture_output=True, text=True, encoding="utf-8")
+            res = subprocess.run([sys.executable, "process_data.py"], 
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env)
+            # Uvnitř DataAnalystAgent.execute() v agents.py:
             if res.returncode == 0 and os.path.exists("processed/summary.json"):
-                print(f"  ✅ [Data_Analyst] Skript process_data.py proběhl úspěšně (pokus {attempt}).")
+                with open("processed/summary.json", "r", encoding="utf-8") as sf:
+                    summary_text = sf.read()
+                
+                # TVRDÁ KONTROLA KVALITY VÝPOČTŮ (GIGO prevence):
+                if "nan" in summary_text.lower() or "null" in summary_text.lower() or len(summary_text) < 20:
+                    print(f"  ⚠️ [Data_Analyst] Skript sice doběhl, ale summary.json obsahuje NaN/null hodnoty (pokus {attempt}/{max_retries})!")
+                    prompt = (
+                        f"Tvůj skript doběhl, ale vygenerovaný 'processed/summary.json' obsahuje neplatné hodnoty (NaN nebo null):\n"
+                        f"{summary_text}\n\n"
+                        f"Zde je tvůj kód:\n{code}\n\n"
+                        f"PŘÍČINA: Pravděpodobně filtruješ data příliš úzkou podmínkou (např. špatný rozsah proudu/napětí) nebo špatně indexuješ sloupce v Excelu. "
+                        f"Oprav výpočet tak, aby všechny číselné parametry vyšly jako reálná konečná čísla (žádné NaN/null)!"
+                    )
+                    continue
+
+                print(f"  ✅ [Data_Analyst] Skript process_data.py proběhl úspěšně a data jsou validní (pokus {attempt}).")
                 return True
 
             print(f"  ⚠️ [Data_Analyst] Chyba při běhu skriptu (pokus {attempt}/{max_retries}):\n{res.stderr}")
@@ -82,22 +112,22 @@ class DataAnalystAgent(BaseLabAgent):
 
 
 class QuartoWriterAgent(BaseLabAgent):
-    """Fáze 2: Sestavuje první návrh protokolu (.qmd) z již vypočtených dat a hotových grafů."""
+    """Fáze 2: Sestavuje návrh protokolu (.qmd) jako čistý Quarto Markdown z hotových dat."""
 
     def __init__(self, config_list: list, global_rules: list[str], task_rules: list[str]):
         all_rules = "\n".join([f"- {r}" for r in (global_rules + task_rules)])
         sys_msg = f"""Jsi odborný autor laboratorních protokolů v systému Quarto (.qmd) na VUT FEKT.
-        Veškeré výpočty a grafy už za tebe připravil datový analytik!
-        Tvým úkolem je napsat tělo souboru protokol.qmd (sekce '# Teoretický úvod', '# Metodika', '# Výsledky', '# Diskuze', '# Závěr').
+    Veškeré výpočty a grafy už za tebe připravil datový analytik!
+    Tvým úkolem je napsat tělo souboru protokol.qmd (sekce '# Teoretický úvod', '# Metodika', '# Výsledky', '# Diskuze', '# Závěr').
 
-        JAK VLOŽIT HOTOVÁ DATA A GRAFY:
-        - V sekci '# Výsledky' načti 'processed/summary.json' přes `df = pd.read_json('processed/summary.json')` a vypiš tabulku pomocí `display(Markdown(df.to_markdown(index=False)))`.
-        - Grafy už NEPOČÍTEJ, pouze je vlož ze seznamu vygenerovaných souborů přes Markdown: `![V-A charakteristika](processed/graf_nazev.pdf){{width=80%}}`.
-        - V sekcích '# Diskuze' a '# Závěr' komentuj PŘESNÁ ČÍSLA z dodaného JSON souhrnu!
-        - Pokud si v jakékoliv části nejsi jistý (chybí informace v zadání), vlož značku: `[NEJISTOTA: stručný popis, co chybí]`.
+    KRITICKÁ PRAVIDLA PRO STRUKTURU (.qmd):
+    1. NIKDY na začátek dokumentu nepiš YAML hlavičku (žádné `---`, `title:`, `author:`)! Začni rovnou na prvním řádku nadpisem `# Teoretický úvod`.
+    2. Do dokumentu už NEPIŠ ŽÁDNÉ spustitelné bloky ```` ```{{python}} ````! Všechna vypočtená čísla z `processed/summary.json` už vidíš v promptu – vypiš souhrnnou tabulku v sekci '# Výsledky' přímo jako čistou Markdown tabulku (`| Sloupec 1 | Sloupec 2 |...`) a konkrétní čísla z ní rovnou dosaď přímo do textu v sekcích '# Diskuze' a '# Závěr'!
+    3. Grafy vlož v sekci '# Výsledky' přes Markdown: `![Popis grafu](processed/graf_nazev.pdf){{width=75%}}`. Mezi každými dvěma obrázky MUSÍ být vždy prázdný řádek (nový odstavec), jinak se v PDF překryjí vedle sebe!
+    4. Značku `[NEJISTOTA: ...]` použij MAXIMÁLNĚ 1x v celém dokumentu, a to pouze tehdy, pokud v zadání vysloveně chybí klíčový parametr. Nikdy nepoužívej více značek v jedné větě!
 
-        STRIKTNÍ PRAVIDLA FORMÁTOVÁNÍ:
-        {all_rules}"""
+    DALŠÍ PRAVIDLA:
+    {all_rules}"""
         super().__init__(name="Quarto_Writer", system_message=sys_msg, config_list=config_list, max_tokens=8192)
 
     def execute(self, zadani_text: str, computed_summary: str, generated_plots: list[str], output_path: Path) -> str:

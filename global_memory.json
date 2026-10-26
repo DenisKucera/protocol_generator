@@ -5,7 +5,7 @@
     4
   ],
   "lessons_learned": [
-    "1. Načítání dat: Vždy používej přesnou cestu k souboru ze složky 'data/' a přesné názvy sloupců z přehledu (např. 'U_f,mean [V]').",
+    "1. Načítání výsledků v Quartu: V souboru protokol.qmd načítej připravenou souhrnnou tabulku VÝHRADNĚ ze souboru 'processed/summary.json' pomocí pd.read_json('processed/summary.json').",
     "2. Vícenásobná data: Pokud má Excel více listů, načti je přes `pd.read_excel('data/...', sheet_name=None)` a proiteruj v cyklu `for nazev, df in sheets.items():`.",
     "3. Quarto a Python výstupy: Každý spustitelný Python blok musí začínat magickým komentářem `#| results: asis` a výstupy formátuj výhradně přes `display(Markdown(...))`. Zakázáno je obyčejné `display(df)` (použij `df.to_markdown(index=False)`).",
     "4. Zákaz f-stringů mimo Python: V běžném Markdown textu mimo Python bloky nepoužívej f-stringy (žádné `{promenna}`).",
@@ -22,7 +22,8 @@
     "Před výpisem tabulky zaokrouhli hodnoty na 3 desetinná místa pomocí df = df.round(3).",
     "Sekce 'Diskuze' i 'Závěr' vypisuj přes display(Markdown(rf\"...\")) přímo z Pythonu s dosazenými reálnými hodnotami z tabulky!",
     "Sekce 'Závěr' NESMÍ obsahovat žádné odrážky ani číslování (1., 2.). Musí jít o souvislý odstavec textu.",
-    "V Matplotlibu NIKDY nepoužívej zastaralý styl 'seaborn-whitegrid' (použij 'seaborn-v0_8-whitegrid')."
+    "V Matplotlibu NIKDY nepoužívej zastaralý styl 'seaborn-whitegrid' (použij 'seaborn-v0_8-whitegrid').",
+    "Při psaní dlouhých f-stringů v Pythonu přes rf\"\"\"...\"\"\" NIKDY nepoužívej zpětné lomítko \\ na konci řádku pro zarovnání. Piš text v řádku bez lomítka na konci."
   ],
   "gold_code_example": ""
 }

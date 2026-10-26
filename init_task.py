@@ -1,7 +1,10 @@
-import os
 import json
 import shutil
+import unicodedata
 from pathlib import Path
+
+def remove_accents(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 def init_new_task():
     print("=== INICIALIZACE NOVÉ LABORATORNÍ ÚLOHY ===")
@@ -11,8 +14,9 @@ def init_new_task():
     nazev = input("Název úlohy (např. Měření V-A charakteristik): ").strip()
     datum = input("Datum měření (např. 21. 10. 2026): ").strip()
 
-    # Vytvoření bezpečného názvu složky
-    safe_name = f"{kod}_uloha{cislo}_{nazev[:20].replace(' ', '_')}"
+    # Uvnitř init_new_task():
+    clean_nazev = remove_accents(nazev[:20]).replace(" ", "_")
+    safe_name = f"{kod}_uloha{cislo}_{clean_nazev}"
     task_dir = Path("ulohy") / safe_name
     
     (task_dir / "data").mkdir(parents=True, exist_ok=True)
@@ -47,15 +51,15 @@ def init_new_task():
 
     # 2. Vytvoření dědičného spouštěcího skriptu run_task.py přímo ve složce úlohy
     run_task_code = f'''import sys
-from pathlib import Path
+    from pathlib import Path
 
-# Přidání root složky do sys.path, abychom mohli importovat rodičovskou třídu
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(ROOT_DIR))
+    # Přidání root složky do sys.path, abychom mohli importovat rodičovskou třídu
+    ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+    sys.path.append(str(ROOT_DIR))
 
-from generator_core import BaseProtocolGenerator
+    from generator_core import BaseProtocolGenerator
 
-class TaskProtocolGenerator(BaseProtocolGenerator):
+    class TaskProtocolGenerator(BaseProtocolGenerator):
     """
     Specifická instance generátoru pro úlohu: {nazev} ({kod})
     Dědí veškerou logiku z BaseProtocolGenerator.

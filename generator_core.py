@@ -2,14 +2,12 @@ import os
 import re
 import json
 import glob
-import shutil
 import subprocess
 import pandas as pd
 from pathlib import Path
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from agents import DataAnalystAgent, QuartoWriterAgent, ProtocolInspectorAgent
-from autogen import ConversableAgent, UserProxyAgent
 
 class BaseProtocolGenerator:
     """Base třída obsahující kompletní engine pro generování protokolů."""
@@ -135,38 +133,42 @@ class BaseProtocolGenerator:
         meta = self.task_config["lab_metadata"]
         pdf_path = "zadani.pdf"
         
-        md_zadani = ""
+        zadani_text = ""
         if os.path.exists(pdf_path):
             reader = PdfReader(pdf_path)
             s_idx = (meta.get("start_page", 1) - 1)
             e_idx = meta.get("end_page", len(reader.pages))
             for i in range(s_idx, min(e_idx, len(reader.pages))):
-                md_zadani += f"\n--- Strana {i+1} ---\n" + (reader.pages[i].extract_text() or "")
+                zadani_text += f"\n--- Strana {i+1} ---\n" + (reader.pages[i].extract_text() or "")
         else:
             print("⚠️ Upozornění: zadani.pdf nebylo ve složce úlohy nalezeno.")
 
-        data_info = ""
-        valid_files = []
+        data_files = sorted(
+            glob.glob("data/*.xlsx") + glob.glob("data/*.xls") + glob.glob("data/*.csv")
+        )
+        valid_files = [f.replace("\\", "/") for f in data_files]
+        data_info_parts = []
 
-        for xlsx_path in glob.glob("data/*.xlsx"):
-            xlsx_path = xlsx_path.replace("\\", "/")
-            valid_files.append(xlsx_path)
-            all_sheets = pd.read_excel(xlsx_path, sheet_name=None)
-            data_info += f"\n=== EXCEL: '{xlsx_path}' (Listy: {list(all_sheets.keys())}) ===\n"
-            for s_name, df in all_sheets.items():
-                df = df.dropna(how="all")
-                data_info += f"  -> List '{s_name}' | Sloupce: {list(df.columns)}\n{df.head(3).to_string()}\n"
+        for fpath in valid_files:
+            if fpath.endswith((".xlsx", ".xls")):
+                xls = pd.ExcelFile(fpath)
+                data_info_parts.append(f"SOUBOR: '{fpath}' | LISTY (sheets): {xls.sheet_names}")
+                for sheet in xls.sheet_names:
+                    # Načteme surovou mřížku bez headeru, aby agent viděl přesné indexy řádků a sloupců!
+                    raw_df = pd.read_excel(fpath, sheet_name=sheet, header=None, nrows=10)
+                    raw_df = raw_df.dropna(how="all", axis=0).dropna(how="all", axis=1)
+                    data_info_parts.append(
+                        f"--- Ukázka surových buněk listu '{sheet}' (header=None, prvních 10 řádků) ---\n"
+                        f"{raw_df.to_string()}\n"
+                    )
+            elif fpath.endswith(".csv"):
+                raw_df = pd.read_csv(fpath, header=None, nrows=10, sep=None, engine="python")
+                data_info_parts.append(
+                    f"SOUBOR CSV: '{fpath}' (prvních 10 řádků, header=None):\n{raw_df.to_string()}\n"
+                )
 
-        for csv_path in glob.glob("data/*.csv"):
-            csv_path = csv_path.replace("\\", "/")
-            valid_files.append(csv_path)
-            df = pd.read_csv(csv_path)
-            data_info += f"\n=== CSV: '{csv_path}' | Sloupce: {list(df.columns)} ===\n{df.head(3).to_string()}\n"
-
-        if not valid_files:
-            raise FileNotFoundError("❌ USER INPUT ERROR: Složka 'data/' je prázdná! Vlož do ní naměřená data (.xlsx nebo .csv).")
-
-        return md_zadani, data_info, valid_files
+        data_info = "\n".join(data_info_parts)
+        return zadani_text, data_info, valid_files
 
     def custom_scoreboard_checks(self, qmd_text: str) -> tuple[int, list[str]]:
         """
@@ -181,41 +183,28 @@ class BaseProtocolGenerator:
                 penalties.append(f"-40 bodů: Použil jsi zakázané slovo/koncept pro tuto úlohu: '{word}'!")
         return deduction, penalties
 
-    def evaluate_qmd_scoreboard(self, qmd_text: str, valid_files: list[str]):
-        """Hlavní Scoreboard kombinující globální kontroly a specifické kontroly úlohy."""
+    def evaluate_qmd_scoreboard(self, qmd_text: str, valid_files: list[str] = None):
+        """
+        Scoreboard pro Fázi 3: Kontroluje .qmd dokument (Quarto syntaxi, LaTeX, strukturu a text).
+        """
         score = 100
         penalties = []
 
-        has_read_call = bool(re.search(r"read_(?:excel|csv)\s*\(", qmd_text))
-        used_valid_file = any(vf in qmd_text.replace("\\", "/") for vf in valid_files)
-
-        if not has_read_call or not used_valid_file:
-            score -= 60
+        # 1. Kontrola, zda Writer/Inspector vyřešil všechny značky [NEJISTOTA: ...]
+        uncertainties = re.findall(r"\[NEJISTOTA:.*?\]", qmd_text)
+        if uncertainties:
+            score -= 30
             penalties.append(
-                f"-60 bodů: [SOUBOR] V kódu chybí načtení správného souboru přes pd.read_excel/read_csv! "
-                f"Musíš v kódu použít přesně tuto cestu: {valid_files}"
+                f"-30 bodů: [NEJISTOTA] V textu zůstaly nevyřešené značky {uncertainties}! "
+                f"Ověř je ze zadání/dat a nahraď je buď faktem, nebo boxem '> **⚠️ K RUČNÍMU DOPLNĚNÍ:** ...'!"
             )
 
-        # 8. KONTROLA KOMPLETNOSTI DOKUMENTU A UZAVŘENÍ BLOKŮ (Ochrana proti useknutému výstupu)
-        open_blocks = len(re.findall(r"```\{python\}", qmd_text))
-        all_fences = len(re.findall(r"```", qmd_text))
-        # Každý otevřený blok musí mít svůj uzavírací ``` (celkový počet ``` musí být sudý a >= 2 * open_blocks)
-        if open_blocks == 0 or all_fences % 2 != 0:
-            score -= 80
-            penalties.append(
-                "-80 bodů: KRITICKÁ CHYBA! Tvůj výstup je USEKNUTÝ uprostřed Python bloku (chybí uzavírací ```)! "
-                "Nevypisuj v cyklu celé tabulky měření pro každou diodu zvlášť, piš stručněji a dokonči celý dokument!"
-            )
+        # Kontrola, že agent nenačítá neexistující 'data/summary.json' místo 'processed/summary.json'
+        if "data/summary.json" in qmd_text:
+            score -= 50
+            penalties.append("-50 bodů: Soubor summary.json leží ve složce 'processed/summary.json', nikoliv v 'data/summary.json'!")
 
-        required_sections = ["Teoretický úvod", "Výsledky", "Diskuze", "Závěr"]
-        missing_sections = [sec for sec in required_sections if sec.lower() not in qmd_text.lower()]
-        if missing_sections:
-            score -= 60
-            penalties.append(
-                f"-60 bodů: Dokument je NEKOMPLETNÍ! Chybí v něm tyto povinné kapitoly: {missing_sections}. "
-                f"Dokument musí obsahovat: Teoretický úvod, Metodiku, Výsledky, Diskuzi a Závěr!"
-            )
-
+        # 2. Kontrola Quarto bloků a výstupů
         if "```python" in qmd_text and "```{python}" not in qmd_text:
             score -= 50
             penalties.append("-50 bodů: Použil jsi neaktivní ```python místo spustitelného Quarto bloku ```{python}!")
@@ -249,45 +238,100 @@ class BaseProtocolGenerator:
             if re.search(r"^\s*(?:[\*\-]|\d+\.)\s+", zaver_text, re.MULTILINE):
                 score -= 40
                 penalties.append("-40 bodů: Sekce Závěr nesmí obsahovat odrážky ani číslování, musí jít o souvislý odstavec!")
-
-        # 6. Kontrola Matplotlibu, stylů a grafů
-        if "seaborn-whitegrid" in qmd_text or "style.use('seaborn')" in qmd_text or "import seaborn" in qmd_text:
-            score -= 30
-            penalties.append("-30 bodů: Nepoužívej seaborn! Nastavuj styl čistého Matplotlibu přes plt.style.use('seaborn-v0_8-whitegrid').")
-
-        if "plt.savefig" in qmd_text or "plt.close" in qmd_text:
+        # 4. Kontrola matematiky a LaTeX závorek (ignoruje LaTeX odřádkování \\[6pt])
+        if re.search(r"(?<!\\)\\\[|(?<!\\)\\\]|(?<!\\)\\\(|(?<!\\)\\\)", qmd_text):
             score -= 40
-            penalties.append("-40 bodů: Nepoužívej plt.savefig() ani plt.close()! Quarto vkládá grafy automaticky přes plt.show().")
-
-        if "subplots(" in qmd_text and ("3, 4" in qmd_text or "4, 3" in qmd_text or "len(sheets)" in qmd_text):
-            score -= 40
-            penalties.append("-40 bodů: Nevykresluj všechny grafy najednou do jedné obří mřížky!")
-
-        # 7. Kontrola raw f-stringů a zdvojených složených závorek v Pythonu
-        if 'f"' in qmd_text and '\\' in qmd_text and 'rf"' not in qmd_text and "rf'" not in qmd_text:
-            score -= 30
-            penalties.append("-30 bodů: Pokud řetězec obsahuje LaTeXová lomítka, použij raw f-string (předponu rf\"...\").")
-
-        if "r'I_{{" in qmd_text or "r'r_{{" in qmd_text or "r'U_{{" in qmd_text:
-            score -= 40
-            penalties.append("-40 bodů: Nedávej LaTeXové složené závorky do názvů sloupců tabulky!")
-
+            penalties.append(
+                "-40 bodů: Pro matematiku používej VÝHRADNĚ dolary ($...$ nebo $$...$$), nikoliv LaTeX závorky \\( a \\[. "
+                "(POZOR: Hranaté závorky v Python kódu jako df['sloupec'] jsou samozřejmě POVINNÉ a nesmíš je měnit!)"
+            )
+        # 6. Kontrola nezdvojených LaTeX závorek v Python blocích
         python_blocks = re.findall(r"```\{python\}.*?```", qmd_text, flags=re.DOTALL)
         for block in python_blocks:
-            if re.search(r"(\\[a-zA-Z]+\{[^{}]+\}|_\{[^{}]*\\[a-zA-Z]+[^{}]*\})", block):
+            # Hledá jednoduchou závorku u LaTeX příkazu nebo u indexu obsahujícího LaTeX příkaz
+            if re.search(r"\\[a-zA-Z]+\{(?!\{)|[_^]\{(?!\{)[^{}]*\\[a-zA-Z]+", block):
                 score -= 40
                 penalties.append(
-                    "-40 bodů: CHYBA SYNTAXE! Uvnitř Python f-stringu (rf\"...\") jsi použil jednoduché LaTeX závorky. "
-                    "Všechny LaTeXové závorky uvnitř f-stringů musíš zdvojit (např. $r_{{\\mathrm{{d}}}}$)!"
+                    "-40 bodů: CHYBA SYNTAXE! Uvnitř Python f-stringu jsi použil jednoduché složené závorky "
+                    "u LaTeXu (např. $I_{\\mathrm{{S}}}$). I vnější závorku za podtržítkem MUSÍŠ ZDVOJIT: $I_{{\\mathrm{{S}}}}$!"
                 )
                 break
+        # 7. Kontrola kompletnosti dokumentu a uzavření bloků
+        all_fences = len(re.findall(r"```", qmd_text))
+        if all_fences % 2 != 0:
+            score -= 80
+            penalties.append("-80 bodů: KRITICKÁ CHYBA! Tvůj výstup je USEKNUTÝ uprostřed bloku (lichý počet ```)!")
 
-        # 3. Zavolání dědičné metody pro specifické kontroly dané úlohy!
+        required_sections = ["Teoretický úvod", "Výsledky", "Diskuze", "Závěr"]
+        missing_sections = [sec for sec in required_sections if sec.lower() not in qmd_text.lower()]
+        if missing_sections:
+            score -= 60
+            penalties.append(f"-60 bodů: Dokument je NEKOMPLETNÍ! Chybí povinné sekce: {missing_sections}.")
+
+        # 8. Zavolání specifických kontrol pro danou úlohu z run_task.py (např. forbidden_words)
         custom_deduction, custom_penalties = self.custom_scoreboard_checks(qmd_text)
         score -= custom_deduction
         penalties.extend(custom_penalties)
 
         return score, penalties
+
+    def _inspect_and_refine(self, qmd_body: str, inspector, zadani_text: str, computed_summary: str, valid_files: list[str]) -> str:
+        """
+        Tvá původní while smyčka se sledováním progrese a detekcí zacyklení!
+        Nyní místo Writera úkoluje ProtocolInspectorAgenta.
+        """
+        best_score = -999
+        best_qmd = qmd_body
+        iteration = 1
+        max_iterations = 4
+        penalty_history_count = {}
+
+        while iteration <= max_iterations:
+            qmd_body = self._sanitize_output(qmd_body)
+            score, penalties = self.evaluate_qmd_scoreboard(qmd_body, valid_files)
+            print(f"\n📊 SCOREBOARD (Iterace {iteration}): {score}/100 bodů")
+
+            if score == 100:
+                print("  ✅ Dosaženo 100/100 bodů! Návrh je bezchybný.")
+                best_qmd = qmd_body
+                break
+
+            # Ukládáme si pouze skutečné zlepšení
+            if score > best_score:
+                best_score = score
+                best_qmd = qmd_body
+
+            # Detekce zacyklení (pokud stejná chyba vyskočí 2x po sobě)
+            stuck = False
+            for p in penalties:
+                p_key = p[:45]
+                penalty_history_count[p_key] = penalty_history_count.get(p_key, 0) + 1
+                if penalty_history_count[p_key] >= 2:
+                    print(f"  🛑 ZACYKLENÍ DETEKOVÁNO: Chyba '{p_key}...' se opakuje už 2x za sebou!")
+                    stuck = True
+
+            if stuck or iteration == max_iterations:
+                print(f"  ⚠️ Ukončuji smyčku. Používám nejlepší nalezenou verzi se skóre {best_score}/100 bodů.")
+                break
+
+            print("  ⚠️ Zjištěny prohřešky nebo nejistoty, předávám k opravě Protocol_Inspectorovi:")
+            for p in penalties:
+                print("    ", p)
+
+            # Zavoláme ProtocolInspectorAgenta, aby chyby a [NEJISTOTA: ...] opravil
+            candidate_body = inspector.execute(qmd_body, penalties, zadani_text, computed_summary)
+
+            if len(candidate_body) > 200:
+                qmd_body = candidate_body
+            else:
+                print("  ⚠️ Inspector vrátil prázdnou/krátkou odpověď, ponechávám předchozí verzi.")
+
+            iteration += 1
+
+        # Na závěr zkontrolujeme finální stav nejlepší verze, zapíšeme případný audit_protokolu.txt a očistíme LaTeX
+        _, final_penalties = self.evaluate_qmd_scoreboard(best_qmd, valid_files)
+        annotated_qmd = self.annotate_and_log_issues(best_qmd, final_penalties)
+        return self._sanitize_output(annotated_qmd)
 
     def build_yaml_header(self):
         cfg = self.task_config["lab_metadata"]
@@ -324,100 +368,60 @@ class BaseProtocolGenerator:
         ]
         return "\n".join(yaml_lines)
     
-    def run(self):
-        """Hlavní šablonová metoda (Template Method), která řídí celý proces."""
+    def run(self, force_stage: int = 0):
+        """Hlavní orchestrátor: připraví prostředí a řídí jednotlivé fáze pipeline."""
         os.chdir(self.task_dir)
         self.ensure_template_files()
         zadani_text, data_info, valid_files = self.load_lab_context()
 
-        all_rules = self.global_memory["lessons_learned"] + self.task_config.get("task_specific_rules", [])
-        rules_str = "\n".join([f"- {r}" for r in all_rules])
+        processed_dir = self.task_dir / "processed"
+        processed_dir.mkdir(exist_ok=True)
+        summary_file = processed_dir / "summary.json"
+        draft_file = self.task_dir / "draft_protokol.qmd"
+        final_file = self.task_dir / "protokol.qmd"
 
-        writer_agent = ConversableAgent(
-            name="Quarto_Writer",
-            system_message=f"""Jsi expert na sázecí systém Quarto (.qmd) a Python na VUT FEKT.
-            Sestav kompletní tělo laboratorního protokolu (BEZ YAML hlavičky, začni rovnou '# Teoretický úvod').
-            Dokument MUSÍ obsahovat sekce: # Teoretický úvod, # Metodika, # Výsledky, # Diskuze a # Závěr.
-            V cyklu pro jednotlivé listy Excelu vykresluj pouze grafy (NIKDY nevypisuj podrobné tabulky surových dat pro každý list zvlášť, vypiš jen jednu celkovou souhrnnou tabulku výsledků!).
+        global_rules = self.global_memory["lessons_learned"]
+        task_rules = self.task_config.get("task_specific_rules", [])
 
-            STRIKTNÍ PRAVIDLA (GLOBÁLNÍ + SPECIFICKÁ PRO TUTO ÚLOHU):
-            {rules_str}""",
-            # Zvýšení max_tokens na 8192, aby Groq nikdy neuřízl kód v polovině!
-            llm_config={"config_list": self.config_list, "temperature": 0.1, "max_tokens": 8192},
-        )
-        user = UserProxyAgent(name="User", human_input_mode="NEVER", max_consecutive_auto_reply=0, code_execution_config=False)
+        ran_previous_stage = False
+        # --- FÁZE 1: ZPRACOVÁNÍ DAT A GRAFŮ ---
+        if not summary_file.exists() or force_stage == 1:
+            print("\n🚀 [FÁZE 1/4] Spouštím DataAnalystAgent...")
+            analyst = DataAnalystAgent(self.config_list, valid_files, task_rules)
+            analyst.execute(zadani_text, data_info)
+            ran_previous_stage = True
+        else:
+            print("\n⏩ [FÁZE 1/4] Přeskakuji (nalezen 'processed/summary.json').")
 
-        prompt = f"ZADÁNÍ:\n{zadani_text}\n\nDATA:\n{data_info}\n\nSestav kompletní tělo souboru protokol.qmd až po sekci # Závěr."
-        res = user.initiate_chat(writer_agent, message=prompt)
-        qmd_body = self._clean_fences(res.chat_history[-1]["content"].strip())
+        with open(summary_file, "r", encoding="utf-8") as f:
+            computed_summary = f.read()
+        generated_plots = sorted([p.replace("\\", "/") for p in glob.glob("processed/*.pdf")])
 
-        best_score = -999
-        best_qmd = qmd_body
-        iteration = 1
-        max_iterations = 4
-        penalty_history_count = {}
+        # --- FÁZE 2: NÁVRH PROTOKOLU ---
+        if not draft_file.exists() or ran_previous_stage or force_stage in [1, 2]:
+            print("\n✍️ [FÁZE 2/4] Spouštím QuartoWriterAgent...")
+            writer = QuartoWriterAgent(self.config_list, global_rules, task_rules)
+            writer.execute(zadani_text, computed_summary, generated_plots, draft_file)
+            ran_previous_stage = True
+        else:
+            print("\n⏩ [FÁZE 2/4] Přeskakuji (nalezen 'draft_protokol.qmd').")
 
-        while iteration <= max_iterations:
-            score, penalties = self.evaluate_qmd_scoreboard(qmd_body, valid_files)
-            print(f"\nSCOREBOARD (Iterace {iteration}): {score}/100 bodů")
+        with open(draft_file, "r", encoding="utf-8") as f:
+            current_qmd = f.read()
 
-            if score == 100:
-                print("Dosaženo 100/100 bodů!")
-                best_qmd = qmd_body
-                break
-
-            # Ukládáme si pouze skutečné zlepšení
-            if score > best_score:
-                best_score = score
-                best_qmd = qmd_body
-
-            # Kontrola opakujících se identických chyb (použijeme prvních 45 znaků celé penalizace)
-            stuck = False
-            for p in penalties:
-                p_key = p[:45]
-                penalty_history_count[p_key] = penalty_history_count.get(p_key, 0) + 1
-                if penalty_history_count[p_key] >= 2:
-                    print(f"ZACYKLENÍ DETEKOVÁNO: Chyba '{p_key}...' se opakuje už 2x za sebou!")
-                    stuck = True
-
-            # Teď už break správně ukončí celou while smyčku a zachová předchozí 'best_qmd'!
-            if stuck or iteration == max_iterations:
-                print(f"Ukončuji smyčku. Používám nejlepší nalezenou verzi se skóre {best_score}/100 bodů.")
-                break
-
-            print("Zjištěny prohřešky, posílám agentovi penalizaci k opravě:")
-            for p in penalties:
-                print("  ", p)
-
-            fix_prompt = (
-                f"Tvůj předchozí výstup získal pouze {score}/100 bodů kvůli těmto chybám:\n"
-                + "\n".join(penalties) +
-                f"\n\nZde je tvůj předchozí kód, který musíš OPRAVIT a DOKONČIT:\n{qmd_body}\n\n"
-                f"STRIKTNÍ PŘÍKAZ: Vrať KOMPLETNÍ opravený kód od '# Teoretický úvod' až do konce '# Závěr'. "
-                f"Všechny Python bloky musí být řádně ukončeny značkou ```. Použij soubor {valid_files}."
-            )
+        # --- FÁZE 3: INSPEKCE A SCOREBOARD SMYČKA ---
+        if not final_file.exists() or ran_previous_stage or force_stage in [1, 2, 3]:
+            print("\n🕵️ [FÁZE 3/4] Spouštím kontrolu kvality (Scoreboard + ProtocolInspectorAgent)...")
+            inspector = ProtocolInspectorAgent(self.config_list, global_rules)
+            current_qmd = self._inspect_and_refine(current_qmd, inspector, zadani_text, computed_summary, valid_files)
             
-            res_fix = writer_agent.generate_reply(messages=[{"role": "user", "content": fix_prompt}])
-            candidate_body = res_fix.get("content", "") if isinstance(res_fix, dict) else str(res_fix)
-            candidate_body = self._clean_fences(candidate_body.strip())
+            with open(final_file, "w", encoding="utf-8") as f:
+                f.write(self.build_yaml_header() + current_qmd)
+        else:
+            print("\n⏩ [FÁZE 3/4] Přeskakuji (nalezen hotový 'protokol.qmd').")
 
-            # Přijmeme nový kandidátní text, pokud není prázdný
-            if len(candidate_body) > 200:
-                qmd_body = candidate_body
-            else:
-                print("Agent vrátil prázdnou odpověď, ponechávám předchozí verzi.")
-
-            iteration += 1
-
-        # Použití nejlepší verze, sanitizace a uložení
-        final_body = self._sanitize_output(best_qmd)
-        with open("protokol.qmd", "w", encoding="utf-8") as f:
-            f.write(self.build_yaml_header() + final_body)
-
-        # Zjistíme finální stav nejlepší verze a případně označíme řádky k ruční kontrole
-        score, final_penalties = self.evaluate_qmd_scoreboard(best_qmd, valid_files)
-        annotated_qmd = self.annotate_and_log_issues(best_qmd, final_penalties)
-        final_body = self._sanitize_output(annotated_qmd)
+        # --- FÁZE 4: KOMPILACE DO PDF ---
+        print("\n🖨️ [FÁZE 4/4] Spouštím překlad v Quartu...")
         self.compile_pdf()
 
     def _clean_fences(self, text: str) -> str:
@@ -432,8 +436,35 @@ class BaseProtocolGenerator:
         return text
 
     def _sanitize_output(self, text: str) -> str:
+        if "# Teoretický úvod" in text:
+            text = text[text.index("# Teoretický úvod"):]
+        # 0b. Zajištění prázdného řádku mezi po sobě jdoucími obrázky ![...](...), aby se v PDF nepřekrývaly vedle sebe!
+        text = re.sub(r"(\!\[.*?\]\(.*?\)(?:\{.*?\})?)\s*\n\s*(\!\[)", r"\1\n\n\2", text)
+        # 1. Automatická oprava ```python na spustitelný Quarto blok ```{python}
+        text = re.sub(r"```python\b", "```{python}", text)
+        # 2. Automatická oprava cesty k summary.json
+        text = text.replace("data/summary.json", "processed/summary.json")
+        # 3. Oprava případného poškození Python indexování (pokud agent přepsal [ ] na $$)
+        text = re.sub(r"df\$\$(.*?)\$\$", r"df[\1]", text)
+        text = re.sub(r"\.iloc\$\$(\d+)\$\$", r".iloc[\1]", text)
+        text = re.sub(r"(task\d+)\$\$'(.*?)'\$\$", r"\1['\2']", text)
+        # 4. Automatická oprava LaTeX závorek \(...\) a [...] POUZE mimo Python bloky (nebo bezpečně s негативním lookbehindem pro \\)
+        text = re.sub(r"(?<!\\)\\\[", "$$", text) 
+        text = re.sub(r"(?<!\\)\\\]", "$$", text)
+        text = re.sub(r"(?<!\\)\\\(", "$", text) 
+        text = re.sub(r"(?<!\\)\\\)", "$", text)
+        # 5. Očištění problematických Unicode znaků
         text = text.replace("\u2011", "-").replace("\\u2011", "-").replace("\u202f", " ").replace("\\u202f", " ")
-        text = re.sub(r"\\(mathrm|text|textbf|mathit)\{([^{}]+)\}", r"\\\1{{\2}}", text)
+        # 6. NEPRŮSTŘELNÁ OPRAVA LaTeX závorek uvnitř ```{python} bloků (zvládá i vnořené _{ \text{...} })
+        def fix_python_block(match):
+            block = match.group(0)
+            # A) Nejprve zdvojíme závorky přímo za LaTeX příkazy: \text{low} -> \text{{low}}, \mathrm{S} -> \mathrm{{S}}
+            block = re.sub(r"(\\[a-zA-Z]+)\{(?!\{)([^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
+            # B) Poté zdvojíme závorky u dolních/horních indexů, které obsahují LaTeX příkaz: _{\mathrm{{S}}} -> _{{\mathrm{{S}}}}
+            block = re.sub(r"([_^])\{(?!\{)([^{}]*?(?:\{\{[^{}]*?\}\}[^{}]*?)*\\[a-zA-Z]+[^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
+            return block
+
+        text = re.sub(r"```\{python\}.*?```", fix_python_block, text, flags=re.DOTALL)
         return text
 
     def annotate_and_log_issues(self, qmd_body: str, penalties: list[str]) -> str:
