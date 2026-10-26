@@ -4,6 +4,23 @@
 \usepackage{booktabs}
 \usepackage{needspace}
 \usepackage{etoolbox}
-\preto{\section}{\needspace{6cm}}
+\usepackage{caption}
+
+% Nastavení vzhledu popisků obrázků přesně podle VUT stylu (Obr. 1. Tučný popisek, centrovaný)
+\captionsetup[figure]{
+    name=Obr.,
+    labelsep=period,
+    font={small,bf},
+    justification=centering
+}
+
+% Vynucení, aby obrázky v Quartu NIKDY neodplouvaly mimo své místo v textu!
+\makeatletter
+\def\fps@figure{H}
+\makeatother
+
+% Ochrana nadpisů před osiřením na konci stránky
+\preto{\section}{\needspace{5cm}}
+\preto{\subsection}{\needspace{4cm}}
 \providetoggle{nobreak}
 \appto{\tabular}{\toggletrue{nobreak}}

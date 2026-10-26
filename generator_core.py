@@ -7,7 +7,7 @@ import pandas as pd
 from pathlib import Path
 from pypdf import PdfReader
 from dotenv import load_dotenv
-from agents import DataAnalystAgent, QuartoWriterAgent, ProtocolInspectorAgent
+from agents import DataAnalystAgent, QuartoWriterAgent, ProtocolInspectorAgent, VisionCuratorAgent
 
 class BaseProtocolGenerator:
     """Base třída obsahující kompletní engine pro generování protokolů."""
@@ -268,6 +268,17 @@ class BaseProtocolGenerator:
             score -= 60
             penalties.append(f"-60 bodů: Dokument je NEKOMPLETNÍ! Chybí povinné sekce: {missing_sections}.")
 
+        # Kontrola vložení všech fotografií z img/ a správného formátování popisků
+        image_files = [p.replace("\\", "/") for p in glob.glob("img/*.jpg") + glob.glob("img/*.jpeg") + glob.glob("img/*.png") if "FEKT_logo" not in p]
+        missing_imgs = [img for img in image_files if img not in qmd_text]
+        if missing_imgs:
+            score -= 50
+            penalties.append(f"-50 bodů: Do protokolu jsi zapomněl vložit tyto fotografie ze složky img/: {missing_imgs}! Musíš vložit všechny!")
+
+        if re.search(r"\!\[Obr\.\s*\d+", qmd_text, re.IGNORECASE):
+            score -= 30
+            penalties.append("-30 bodů: V popisku obrázku ![Obr. X. ...] nepiš 'Obr. X.', LaTeX ho čísluje automaticky! Piš rovnou ![Text popisku](cesta){width=62% fig-align=\"center\"}.")
+
         # 8. Zavolání specifických kontrol pro danou úlohu z run_task.py (např. forbidden_words)
         custom_deduction, custom_penalties = self.custom_scoreboard_checks(qmd_text)
         score -= custom_deduction
@@ -384,18 +395,39 @@ class BaseProtocolGenerator:
         task_rules = self.task_config.get("task_specific_rules", [])
 
         ran_previous_stage = False
-        # --- FÁZE 1: ZPRACOVÁNÍ DAT A GRAFŮ ---
-        if not summary_file.exists() or force_stage == 1:
-            print("\n🚀 [FÁZE 1/4] Spouštím DataAnalystAgent...")
-            analyst = DataAnalystAgent(self.config_list, valid_files, task_rules)
-            analyst.execute(zadani_text, data_info)
-            ran_previous_stage = True
+        # --- FÁZE 1A: ZPRACOVÁNÍ NUMERICKÝCH DAT (Pokud existuje Excel/CSV v data/) ---
+        if valid_files:
+            if not summary_file.exists() or force_stage == 1:
+                print("\n🚀 [FÁZE 1A/4] Spouštím DataAnalystAgent (numerická data)...")
+                analyst = DataAnalystAgent(self.config_list, valid_files, task_rules)
+                analyst.execute(zadani_text, data_info)
+                ran_previous_stage = True
+            else:
+                print("\n⏩ [FÁZE 1A/4] Přeskakuji (nalezen 'processed/summary.json').")
+            with open(summary_file, "r", encoding="utf-8") as f:
+                computed_summary = f.read()
         else:
-            print("\n⏩ [FÁZE 1/4] Přeskakuji (nalezen 'processed/summary.json').")
-
-        with open(summary_file, "r", encoding="utf-8") as f:
-            computed_summary = f.read()
+            print("\nℹ️ [FÁZE 1A/4] Ve složce 'data/' nejsou žádná číselná data (praktická/fotografická úloha).")
+            computed_summary = "Tato úloha neobsahuje číselné tabulky v data/, jde o praktickou technologickou úlohu."
         generated_plots = sorted([p.replace("\\", "/") for p in glob.glob("processed/*.pdf")])
+        # --- FÁZE 1B: ZPRACOVÁNÍ FOTOGRAFIÍ (Pokud jsou fotky ve složce img/) ---
+        image_files = sorted(
+            [p.replace("\\", "/") for p in glob.glob("img/*.jpg") + glob.glob("img/*.jpeg") + glob.glob("img/*.png")
+             if "FEKT_logo" not in p]
+        )
+        catalog_file = processed_dir / "images_catalog.json"
+        if image_files:
+            if not catalog_file.exists() or force_stage == 1:
+                print("\n📸 [FÁZE 1B/4] Spouštím VisionCuratorAgent (analýza a formátování fotografií)...")
+                curator = VisionCuratorAgent(api_key=os.environ.get("GROQ_API_KEY"))
+                curator.execute(image_files, zadani_text, task_rules)
+                ran_previous_stage = True
+            else:
+                print("\n⏩ [FÁZE 1B/4] Přeskakuji (nalezen 'processed/images_catalog.json').")
+            with open(catalog_file, "r", encoding="utf-8") as f:
+                images_catalog_str = f.read()
+        else:
+            images_catalog_str = "Žádné fotografie ve složce img/."
 
         # --- FÁZE 2: NÁVRH PROTOKOLU ---
         if not draft_file.exists() or ran_previous_stage or force_stage in [1, 2]:
@@ -448,11 +480,12 @@ class BaseProtocolGenerator:
         text = re.sub(r"df\$\$(.*?)\$\$", r"df[\1]", text)
         text = re.sub(r"\.iloc\$\$(\d+)\$\$", r".iloc[\1]", text)
         text = re.sub(r"(task\d+)\$\$'(.*?)'\$\$", r"\1['\2']", text)
-        # 4. Automatická oprava LaTeX závorek \(...\) a [...] POUZE mimo Python bloky (nebo bezpečně s негативním lookbehindem pro \\)
+        # 4. Automatická oprava LaTeX závorek \(...\) a [...]
         text = re.sub(r"(?<!\\)\\\[", "$$", text) 
         text = re.sub(r"(?<!\\)\\\]", "$$", text)
         text = re.sub(r"(?<!\\)\\\(", "$", text) 
         text = re.sub(r"(?<!\\)\\\)", "$", text)
+        text = re.sub(r"\!\[Obr\.\s*\d+\.?\s*", "![", text)
         # 5. Očištění problematických Unicode znaků
         text = text.replace("\u2011", "-").replace("\\u2011", "-").replace("\u202f", " ").replace("\\u202f", " ")
         # 6. NEPRŮSTŘELNÁ OPRAVA LaTeX závorek uvnitř ```{python} bloků (zvládá i vnořené _{ \text{...} })
@@ -462,6 +495,7 @@ class BaseProtocolGenerator:
             block = re.sub(r"(\\[a-zA-Z]+)\{(?!\{)([^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
             # B) Poté zdvojíme závorky u dolních/horních indexů, které obsahují LaTeX příkaz: _{\mathrm{{S}}} -> _{{\mathrm{{S}}}}
             block = re.sub(r"([_^])\{(?!\{)([^{}]*?(?:\{\{[^{}]*?\}\}[^{}]*?)*\\[a-zA-Z]+[^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
+            block = re.sub(r'display\(\s*Markdown\(\s*r?f?"([^"\n]*)\n([^"]*)"\s*\)\s*\)',r'display(Markdown(r"\1 \2"))',block)
             return block
 
         text = re.sub(r"```\{python\}.*?```", fix_python_block, text, flags=re.DOTALL)

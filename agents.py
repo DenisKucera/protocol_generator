@@ -1,8 +1,12 @@
 import os
 import subprocess
 import sys
+import base64
+import json
 from pathlib import Path
 from autogen import ConversableAgent
+from PIL import Image, ImageOps
+from openai import OpenAI
 
 class BaseLabAgent:
     """Base class pro všechny laboratorní AI agenty."""
@@ -125,8 +129,13 @@ class QuartoWriterAgent(BaseLabAgent):
     2. Do dokumentu už NEPIŠ ŽÁDNÉ spustitelné bloky ```` ```{{python}} ````! Všechna vypočtená čísla z `processed/summary.json` už vidíš v promptu – vypiš souhrnnou tabulku v sekci '# Výsledky' přímo jako čistou Markdown tabulku (`| Sloupec 1 | Sloupec 2 |...`) a konkrétní čísla z ní rovnou dosaď přímo do textu v sekcích '# Diskuze' a '# Závěr'!
     3. Grafy vlož v sekci '# Výsledky' přes Markdown: `![Popis grafu](processed/graf_nazev.pdf){{width=75%}}`. Mezi každými dvěma obrázky MUSÍ být vždy prázdný řádek (nový odstavec), jinak se v PDF překryjí vedle sebe!
     4. Značku `[NEJISTOTA: ...]` použij MAXIMÁLNĚ 1x v celém dokumentu, a to pouze tehdy, pokud v zadání vysloveně chybí klíčový parametr. Nikdy nepoužívej více značek v jedné větě!
-
-    DALŠÍ PRAVIDLA:
+    5. VKLÁDÁNÍ FOTOGRAFIÍ ZE SLOŽKY 'img/' (POKUD JSOU V KATALOGU OBRÁZKŮ):
+    - Pokud dostaneš 'KATALOG FOTOGRAFIÍ Z LABORATOŘE', musíš do dokumentu vložit VŠECHNY fotografie z katalogu v jejich přesném pořadí!
+    - Každou skupinu fotografií uveď podkapitolou (např. `## Příprava zařízení a materiálu`) a souvislým odborným odstavcem, ve kterém popíšeš prováděný krok a odkážeš se na číslo obrázku v závorce, např. `(Obr. 1)` nebo `viz Obr. 2`.
+    - Samotný obrázek vlož VŽDY na samostatný odstavec (s prázdným řádkem nad i pod!) přesně v tomto formátu:
+      `![Přesný text z pole caption bez prefixu Obr. X](cesta_z_pole_file){{width=62% fig-align="center"}}`
+    - NIKDY nepiš dovnitř hranatých závorek `![Obr. 1. ...]` slovo 'Obr. 1.', protože LaTeX ho tam doplňuje automaticky (vzniklo by zdvojené 'Obr. 1.: Obr. 1.')!
+    6. Pokud chceš v Python bloku vypsat delší text přes display(Markdown(...)), použij buď trojité uvozovky (rf\"\"\"...\"\"\"), nebo řádek nerozděluj Enterem uvnitř uvozovek – použij explicitní \n pro nový řádek.
     {all_rules}"""
         super().__init__(name="Quarto_Writer", system_message=sys_msg, config_list=config_list, max_tokens=8192)
 
@@ -168,3 +177,95 @@ class ProtocolInspectorAgent(BaseLabAgent):
             f"NÁVRH PROTOKOLU K REVIZI:\n{draft_qmd}"
         )
         return self.ask(prompt)
+
+class VisionCuratorAgent:
+    """
+    Fáze 1B: Zpracuje fotografie ve složce img/, opraví jejich EXIF rotaci,
+    pomocí Vision modelu rozpozná, co na nich je, a sestaví 'processed/images_catalog.json'.
+    """
+
+    def __init__(self, api_key: str, vision_model: str = "qwen/qwen3.8-27b"):
+        self.client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key)
+        self.vision_model = vision_model
+
+    @staticmethod
+    def _prepare_and_encode_image(img_path: str) -> str:
+        """Opraví EXIF otočení fotky z telefonu, zmenší rozlišení pro PDF/API a vrátí base64."""
+        with Image.open(img_path) as img:
+            # 1. Oprava otočení z mobilu (EXIF Orientation tag)
+            img = ImageOps.exif_transpose(img)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            
+            # 2. Zmenšení příliš velkých fotek (max 1400 px), aby PDF nemělo stovky MB
+            img.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+            img.save(img_path, format="JPEG", quality=85)
+
+        with open(img_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+
+    def execute(self, image_files: list[str], zadani_text: str, task_rules: list[str]) -> list[dict]:
+        catalog = []
+        rules_str = "\n".join([f"- {r}" for r in task_rules])
+
+        print(f"  📸 [Vision_Curator] Nalezeno {len(image_files)} obrázků ve složce 'img/'. Analyzuji obsah...")
+
+        for idx, img_path in enumerate(image_files, start=1):
+            b64_img = self._prepare_and_encode_image(img_path)
+            filename = os.path.basename(img_path)
+
+            prompt = f"""Jsi odborný asistent v laboratořích VUT FEKT.
+        Analyzuješ fotografii č. {idx} (soubor '{filename}') pro laboratorní protokol.
+
+        KONTEXT ZE ZADÁNÍ ÚLOHY:
+        {zadani_text[:2500]}
+
+        SPECIFICKÁ PRAVIDLA ÚLOHY:
+        {rules_str}
+
+        Prohlédni si fotografii (všímej si přístrojů, displejů, hodnot, chemikálií a prováděné činnosti) a vrať ČISTÝ JSON objekt (bez ```json bloků) s těmito klíči:
+        {{
+          "obr_cislo": {idx},
+          "file": "{img_path}",
+          "sekce": "Název logické podkapitoly, kam fotka v postupu patří (např. Příprava zařízení a materiálu, Osvit síta, Optická kontrola apod.)",
+          "caption": "Stručný, přesný odborný popisek pod obrázek (BEZ prefixu 'Obr. X.', ten doplní LaTeX sám! Např.: 'Detail displeje sušičky zobrazující průběh procesu sušení a teploty')",
+          "detailni_popis": "Co přesně je na fotce vidět včetně případných přečtených čísel z displeje/mikroskopu (pro autora textu protokolu)."
+        }}"""
+
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.vision_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
+                            ],
+                        }
+                    ],
+                    temperature=0.1,
+                    max_tokens=600,
+                )
+                raw_json = BaseLabAgent.clean_fences(response.choices[0].message.content.strip())
+                item = json.loads(raw_json)
+                item["obr_cislo"] = idx
+                item["file"] = img_path
+            except Exception as e:
+                print(f"  ⚠️ [Vision_Curator] Záložní popisek pro {filename} ({e})")
+                clean_name = os.path.splitext(filename)[0].replace("_", " ")
+                item = {
+                    "obr_cislo": idx,
+                    "file": img_path,
+                    "sekce": "Praktická část",
+                    "caption": f"Fotodokumentace kroku měření ({clean_name})",
+                    "detailni_popis": f"Fotografie {clean_name}",
+                }
+
+            catalog.append(item)
+            print(f"    ↳ Obr. {idx} ({filename}): {item['caption']}")
+
+        with open("processed/images_catalog.json", "w", encoding="utf-8") as f:
+            json.dump(catalog, f, ensure_ascii=False, indent=2)
+
+        return catalog
