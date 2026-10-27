@@ -141,7 +141,7 @@ class BaseProtocolGenerator:
             for i in range(s_idx, min(e_idx, len(reader.pages))):
                 zadani_text += f"\n--- Strana {i+1} ---\n" + (reader.pages[i].extract_text() or "")
         else:
-            print("⚠️ Upozornění: zadani.pdf nebylo ve složce úlohy nalezeno.")
+            print(" Upozornění: zadani.pdf nebylo ve složce úlohy nalezeno.")
 
         data_files = sorted(
             glob.glob("data/*.xlsx") + glob.glob("data/*.xls") + glob.glob("data/*.csv")
@@ -279,6 +279,14 @@ class BaseProtocolGenerator:
             score -= 30
             penalties.append("-30 bodů: V popisku obrázku ![Obr. X. ...] nepiš 'Obr. X.', LaTeX ho čísluje automaticky! Piš rovnou ![Text popisku](cesta){width=62% fig-align=\"center\"}.")
 
+        # Zákaz falešné hlášky o chybějícím summary.json u fotografických úloh
+        if "summary.json nebyl nalezen" in qmd_text or "nebylo nalezeno" in qmd_text.lower():
+            score -= 60
+            penalties.append(
+                "-60 bodů: V textu píšeš, že 'processed/summary.json nebyl nalezen'! "
+                "Toto je praktická fotografická úloha – výsledky a postup vypisuj z KATALOGU FOTOGRAFIÍ a ZADÁNÍ!"
+            )
+
         # 8. Zavolání specifických kontrol pro danou úlohu z run_task.py (např. forbidden_words)
         custom_deduction, custom_penalties = self.custom_scoreboard_checks(qmd_text)
         score -= custom_deduction
@@ -300,10 +308,10 @@ class BaseProtocolGenerator:
         while iteration <= max_iterations:
             qmd_body = self._sanitize_output(qmd_body)
             score, penalties = self.evaluate_qmd_scoreboard(qmd_body, valid_files)
-            print(f"\n📊 SCOREBOARD (Iterace {iteration}): {score}/100 bodů")
+            print(f"\n SCOREBOARD (Iterace {iteration}): {score}/100 bodů")
 
             if score == 100:
-                print("  ✅ Dosaženo 100/100 bodů! Návrh je bezchybný.")
+                print(" Dosaženo 100/100 bodů! Návrh je bezchybný.")
                 best_qmd = qmd_body
                 break
 
@@ -318,14 +326,14 @@ class BaseProtocolGenerator:
                 p_key = p[:45]
                 penalty_history_count[p_key] = penalty_history_count.get(p_key, 0) + 1
                 if penalty_history_count[p_key] >= 2:
-                    print(f"  🛑 ZACYKLENÍ DETEKOVÁNO: Chyba '{p_key}...' se opakuje už 2x za sebou!")
+                    print(f" ZACYKLENÍ DETEKOVÁNO: Chyba '{p_key}...' se opakuje už 2x za sebou!")
                     stuck = True
 
             if stuck or iteration == max_iterations:
-                print(f"  ⚠️ Ukončuji smyčku. Používám nejlepší nalezenou verzi se skóre {best_score}/100 bodů.")
+                print(f" Ukončuji smyčku. Používám nejlepší nalezenou verzi se skóre {best_score}/100 bodů.")
                 break
 
-            print("  ⚠️ Zjištěny prohřešky nebo nejistoty, předávám k opravě Protocol_Inspectorovi:")
+            print(" Zjištěny prohřešky nebo nejistoty, předávám k opravě Protocol_Inspectorovi:")
             for p in penalties:
                 print("    ", p)
 
@@ -335,7 +343,7 @@ class BaseProtocolGenerator:
             if len(candidate_body) > 200:
                 qmd_body = candidate_body
             else:
-                print("  ⚠️ Inspector vrátil prázdnou/krátkou odpověď, ponechávám předchozí verzi.")
+                print(" Inspector vrátil prázdnou/krátkou odpověď, ponechávám předchozí verzi.")
 
             iteration += 1
 
@@ -398,16 +406,16 @@ class BaseProtocolGenerator:
         # --- FÁZE 1A: ZPRACOVÁNÍ NUMERICKÝCH DAT (Pokud existuje Excel/CSV v data/) ---
         if valid_files:
             if not summary_file.exists() or force_stage == 1:
-                print("\n🚀 [FÁZE 1A/4] Spouštím DataAnalystAgent (numerická data)...")
+                print("\n [FÁZE 1A/4] Spouštím DataAnalystAgent (numerická data)...")
                 analyst = DataAnalystAgent(self.config_list, valid_files, task_rules)
                 analyst.execute(zadani_text, data_info)
                 ran_previous_stage = True
             else:
-                print("\n⏩ [FÁZE 1A/4] Přeskakuji (nalezen 'processed/summary.json').")
+                print("\n [FÁZE 1A/4] Přeskakuji (nalezen 'processed/summary.json').")
             with open(summary_file, "r", encoding="utf-8") as f:
                 computed_summary = f.read()
         else:
-            print("\nℹ️ [FÁZE 1A/4] Ve složce 'data/' nejsou žádná číselná data (praktická/fotografická úloha).")
+            print("\n [FÁZE 1A/4] Ve složce 'data/' nejsou žádná číselná data (praktická/fotografická úloha).")
             computed_summary = "Tato úloha neobsahuje číselné tabulky v data/, jde o praktickou technologickou úlohu."
         generated_plots = sorted([p.replace("\\", "/") for p in glob.glob("processed/*.pdf")])
         # --- FÁZE 1B: ZPRACOVÁNÍ FOTOGRAFIÍ (Pokud jsou fotky ve složce img/) ---
@@ -418,12 +426,12 @@ class BaseProtocolGenerator:
         catalog_file = processed_dir / "images_catalog.json"
         if image_files:
             if not catalog_file.exists() or force_stage == 1:
-                print("\n📸 [FÁZE 1B/4] Spouštím VisionCuratorAgent (analýza a formátování fotografií)...")
+                print("\n [FÁZE 1B/4] Spouštím VisionCuratorAgent (analýza a formátování fotografií)...")
                 curator = VisionCuratorAgent(api_key=os.environ.get("GROQ_API_KEY"))
                 curator.execute(image_files, zadani_text, task_rules)
                 ran_previous_stage = True
             else:
-                print("\n⏩ [FÁZE 1B/4] Přeskakuji (nalezen 'processed/images_catalog.json').")
+                print("\n [FÁZE 1B/4] Přeskakuji (nalezen 'processed/images_catalog.json').")
             with open(catalog_file, "r", encoding="utf-8") as f:
                 images_catalog_str = f.read()
         else:
@@ -431,29 +439,29 @@ class BaseProtocolGenerator:
 
         # --- FÁZE 2: NÁVRH PROTOKOLU ---
         if not draft_file.exists() or ran_previous_stage or force_stage in [1, 2]:
-            print("\n✍️ [FÁZE 2/4] Spouštím QuartoWriterAgent...")
+            print("\n [FÁZE 2/4] Spouštím QuartoWriterAgent...")
             writer = QuartoWriterAgent(self.config_list, global_rules, task_rules)
-            writer.execute(zadani_text, computed_summary, generated_plots, draft_file)
+            writer.execute(zadani_text, computed_summary, generated_plots, images_catalog_str, draft_file)
             ran_previous_stage = True
         else:
-            print("\n⏩ [FÁZE 2/4] Přeskakuji (nalezen 'draft_protokol.qmd').")
+            print("\n [FÁZE 2/4] Přeskakuji (nalezen 'draft_protokol.qmd').")
 
         with open(draft_file, "r", encoding="utf-8") as f:
             current_qmd = f.read()
 
         # --- FÁZE 3: INSPEKCE A SCOREBOARD SMYČKA ---
         if not final_file.exists() or ran_previous_stage or force_stage in [1, 2, 3]:
-            print("\n🕵️ [FÁZE 3/4] Spouštím kontrolu kvality (Scoreboard + ProtocolInspectorAgent)...")
+            print("\n [FÁZE 3/4] Spouštím kontrolu kvality (Scoreboard + ProtocolInspectorAgent)...")
             inspector = ProtocolInspectorAgent(self.config_list, global_rules)
             current_qmd = self._inspect_and_refine(current_qmd, inspector, zadani_text, computed_summary, valid_files)
             
             with open(final_file, "w", encoding="utf-8") as f:
                 f.write(self.build_yaml_header() + current_qmd)
         else:
-            print("\n⏩ [FÁZE 3/4] Přeskakuji (nalezen hotový 'protokol.qmd').")
+            print("\n [FÁZE 3/4] Přeskakuji (nalezen hotový 'protokol.qmd').")
 
         # --- FÁZE 4: KOMPILACE DO PDF ---
-        print("\n🖨️ [FÁZE 4/4] Spouštím překlad v Quartu...")
+        print("\n [FÁZE 4/4] Spouštím překlad v Quartu...")
         self.compile_pdf()
 
     def _clean_fences(self, text: str) -> str:
@@ -468,10 +476,10 @@ class BaseProtocolGenerator:
         return text
 
     def _sanitize_output(self, text: str) -> str:
-        if "# Teoretický úvod" in text:
+        # 0. Oříznutí cizí YAML hlavičky nebo úvodního povídání PŘED '# Teoretický úvod'
+        # (Pozor: řežeme pouze tehdy, pokud na začátku není naše vlastní hlavička s 'before-body.tex'!)
+        if "# Teoretický úvod" in text and "before-body.tex" not in text[:600]:
             text = text[text.index("# Teoretický úvod"):]
-        # 0b. Zajištění prázdného řádku mezi po sobě jdoucími obrázky ![...](...), aby se v PDF nepřekrývaly vedle sebe!
-        text = re.sub(r"(\!\[.*?\]\(.*?\)(?:\{.*?\})?)\s*\n\s*(\!\[)", r"\1\n\n\2", text)
         # 1. Automatická oprava ```python na spustitelný Quarto blok ```{python}
         text = re.sub(r"```python\b", "```{python}", text)
         # 2. Automatická oprava cesty k summary.json
@@ -480,25 +488,68 @@ class BaseProtocolGenerator:
         text = re.sub(r"df\$\$(.*?)\$\$", r"df[\1]", text)
         text = re.sub(r"\.iloc\$\$(\d+)\$\$", r".iloc[\1]", text)
         text = re.sub(r"(task\d+)\$\$'(.*?)'\$\$", r"\1['\2']", text)
-        # 4. Automatická oprava LaTeX závorek \(...\) a [...]
-        text = re.sub(r"(?<!\\)\\\[", "$$", text) 
+        # 4. Automatická oprava LaTeX závorek \(...\) a \[...\] (ignoruje odřádkování \\[6pt])
+        text = re.sub(r"(?<!\\)\\\[", "$$", text)
         text = re.sub(r"(?<!\\)\\\]", "$$", text)
-        text = re.sub(r"(?<!\\)\\\(", "$", text) 
+        text = re.sub(r"(?<!\\)\\\(", "$", text)
         text = re.sub(r"(?<!\\)\\\)", "$", text)
-        text = re.sub(r"\!\[Obr\.\s*\d+\.?\s*", "![", text)
-        # 5. Očištění problematických Unicode znaků
+        # 5. Očištění problematických Unicode znaků (nedělitelné spojovníky a úzké mezery)
         text = text.replace("\u2011", "-").replace("\\u2011", "-").replace("\u202f", " ").replace("\\u202f", " ")
-        # 6. NEPRŮSTŘELNÁ OPRAVA LaTeX závorek uvnitř ```{python} bloků (zvládá i vnořené _{ \text{...} })
+
+        # 6. Oprava Python bloků (zdvojení LaTeX závorek + spojení rozbitých jednořádkových f-stringů)
         def fix_python_block(match):
             block = match.group(0)
-            # A) Nejprve zdvojíme závorky přímo za LaTeX příkazy: \text{low} -> \text{{low}}, \mathrm{S} -> \mathrm{{S}}
+            # A) Zdvojení závorek přímo za LaTeX příkazy: \text{low} -> \text{{low}}, \mathrm{S} -> \mathrm{{S}}
             block = re.sub(r"(\\[a-zA-Z]+)\{(?!\{)([^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
-            # B) Poté zdvojíme závorky u dolních/horních indexů, které obsahují LaTeX příkaz: _{\mathrm{{S}}} -> _{{\mathrm{{S}}}}
-            block = re.sub(r"([_^])\{(?!\{)([^{}]*?(?:\{\{[^{}]*?\}\}[^{}]*?)*\\[a-zA-Z]+[^{}]*?)(?<!\})\}", r"\1{{\2}}", block)
-            block = re.sub(r'display\(\s*Markdown\(\s*r?f?"([^"\n]*)\n([^"]*)"\s*\)\s*\)',r'display(Markdown(r"\1 \2"))',block)
+            # B) Zdvojení závorek u indexů obsahujících LaTeX příkaz: _{\mathrm{{S}}} -> _{{\mathrm{{S}}}}
+            block = re.sub(
+                r"([_^])\{(?!\{)([^{}]*?(?:\{\{[^{}]*?\}\}[^{}]*?)*\\[a-zA-Z]+[^{}]*?)(?<!\})\}",
+                r"\1{{\2}}",
+                block,
+            )
+            # C) Oprava jednořádkových uvozovek roztažených přes Enter uvnitř display(Markdown(...))
+            # (Ignoruje trojité uvozovky """ a zachovává prefix rf"...")
+            block = re.sub(
+                r'display\(\s*Markdown\(\s*(r?f?)"(?!"" )([^"\n]*)\n+\s*([^"]*)"\s*\)\s*\)',
+                r'display(Markdown(\1"\2 \3"))',
+                block,
+            )
             return block
-
         text = re.sub(r"```\{python\}.*?```", fix_python_block, text, flags=re.DOTALL)
+
+        # 7. SJEDNOCENÍ VŠECH OBRÁZKŮ A GRAFŮ (Garantované prázdné řádky okolo + napojení na katalog fotek)
+        catalog_path = Path("processed/images_catalog.json")
+        caption_map = {}
+        if catalog_path.exists():
+            try:
+                with open(catalog_path, "r", encoding="utf-8") as cf:
+                    img_catalog = json.load(cf)
+                caption_map = {item["file"].replace("\\", "/"): item["caption"] for item in img_catalog}
+            except Exception as e:
+                print(f" Chyba při čtení katalogu obrázků v sanitize: {e}")
+
+        def format_all_images(match):
+            alt_text = match.group(1).strip()
+            img_path = match.group(2).strip().replace("\\", "/")
+            existing_attrs = match.group(3) or ""
+            # Odstraníme případný duplicitní prefix 'Obr. X.' nebo 'Obrázek X:'
+            alt_text = re.sub(r"^(?:Obr\.|Obrázek)\s*\d+[\.:]?\s*", "", alt_text, flags=re.IGNORECASE)
+            # Pokud je obrázek v katalogu fotek (img/...)
+            if img_path in caption_map:
+                # Pokud agent napsal jen 'Fotografie X', název souboru nebo nechal popisek krátký, dosadíme přesný caption z katalogu!
+                if "fotografie" in alt_text.lower() or len(alt_text) < 12 or alt_text.lower().endswith((".jpg", ".png")):
+                    alt_text = caption_map[img_path]
+                # Nastavíme max výšku 32 % stránky (zachová poměr stran a na stránku se vejdou 2 fotky i s textem)
+                attrs = '{height=32% fig-align="center"}'
+            else:
+                # Pro analytické grafy z processed/*.pdf
+                attrs = existing_attrs if existing_attrs else '{width=72% fig-align="center"}'
+            # Garantujeme prázdný řádek před i za obrázkem (zabraňuje slévání obrázků a mizení popisků!)
+            return f"\n\n![{alt_text}]({img_path}){attrs}\n\n"
+
+        text = re.sub(r"\!\[([^\]]*)\]\(([^)]+)\)(\{[^}]*\})?", format_all_images, text)
+        # Odstranění případných vícenásobných prázdných řádků (max 1 prázdný řádek mezi odstavci)
+        text = re.sub(r"\n{3,}", "\n\n", text)
         return text
 
     def annotate_and_log_issues(self, qmd_body: str, penalties: list[str]) -> str:
@@ -518,7 +569,7 @@ class BaseProtocolGenerator:
                        ("LaTeX závorky" in p and re.search(r"\\[a-zA-Z]+\{[^{}]+\}", line)) or \
                        ("výpustky" in p and ("..." in line or "DOPLŇ" in line)):
                         report_lines.append(f"    ↳ Nalezeno na řádku {idx}: {line.strip()}")
-                        lines[idx - 1] = line + "  # <-- ⚠️ ZDE ZKONTROLOVAT (SCOREBOARD)"
+                        lines[idx - 1] = line + "  # <-- ZDE ZKONTROLOVAT (SCOREBOARD)"
     
             report_lines.append("="*60 + "\n")
             audit_text = "\n".join(report_lines)
@@ -533,7 +584,7 @@ class BaseProtocolGenerator:
         print("\nSpouštím překlad v Quartu...")
         res = subprocess.run(["quarto", "render", "protokol.qmd", "--to", "pdf"], capture_output=True, text=True, encoding="utf-8", shell=True)
         if res.returncode == 0:
-            print("🎉 ÚSPĚCH! Otevírám protokol.pdf...")
+            print(" ÚSPĚCH! Otevírám protokol.pdf...")
             os.startfile("protokol.pdf")
         else:
-            print("❌ CHYBA KOMPILACE:\n", res.stderr)
+            print(" CHYBA KOMPILACE:\n", res.stderr)

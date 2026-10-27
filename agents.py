@@ -92,7 +92,7 @@ class DataAnalystAgent(BaseLabAgent):
                 
                 # TVRDÁ KONTROLA KVALITY VÝPOČTŮ (GIGO prevence):
                 if "nan" in summary_text.lower() or "null" in summary_text.lower() or len(summary_text) < 20:
-                    print(f"  ⚠️ [Data_Analyst] Skript sice doběhl, ale summary.json obsahuje NaN/null hodnoty (pokus {attempt}/{max_retries})!")
+                    print(f" [Data_Analyst] Skript sice doběhl, ale summary.json obsahuje NaN/null hodnoty (pokus {attempt}/{max_retries})!")
                     prompt = (
                         f"Tvůj skript doběhl, ale vygenerovaný 'processed/summary.json' obsahuje neplatné hodnoty (NaN nebo null):\n"
                         f"{summary_text}\n\n"
@@ -102,17 +102,17 @@ class DataAnalystAgent(BaseLabAgent):
                     )
                     continue
 
-                print(f"  ✅ [Data_Analyst] Skript process_data.py proběhl úspěšně a data jsou validní (pokus {attempt}).")
+                print(f" [Data_Analyst] Skript process_data.py proběhl úspěšně a data jsou validní (pokus {attempt}).")
                 return True
 
-            print(f"  ⚠️ [Data_Analyst] Chyba při běhu skriptu (pokus {attempt}/{max_retries}):\n{res.stderr}")
+            print(f" [Data_Analyst] Chyba při běhu skriptu (pokus {attempt}/{max_retries}):\n{res.stderr}")
             prompt = (
                 f"Tvůj skript spadl s touto chybou:\n{res.stderr}\n\n"
                 f"Zde je tvůj předchozí kód:\n{code}\n\n"
                 f"Oprav ho a vrať kompletní funkční Python skript (bez ```python bloků)."
             )
 
-        raise RuntimeError("❌ DataAnalystAgent nedokázal vygenerovat funkční výpočetní skript ani po 3 pokusech.")
+        raise RuntimeError(" DataAnalystAgent nedokázal vygenerovat funkční výpočetní skript ani po 3 pokusech.")
 
 
 class QuartoWriterAgent(BaseLabAgent):
@@ -121,35 +121,59 @@ class QuartoWriterAgent(BaseLabAgent):
     def __init__(self, config_list: list, global_rules: list[str], task_rules: list[str]):
         all_rules = "\n".join([f"- {r}" for r in (global_rules + task_rules)])
         sys_msg = f"""Jsi odborný autor laboratorních protokolů v systému Quarto (.qmd) na VUT FEKT.
-    Veškeré výpočty a grafy už za tebe připravil datový analytik!
-    Tvým úkolem je napsat tělo souboru protokol.qmd (sekce '# Teoretický úvod', '# Metodika', '# Výsledky', '# Diskuze', '# Závěr').
+        Veškeré výpočty, grafy a analýzu fotografií už za tebe připravili předchozí agenti!
+        Tvým úkolem je napsat kompletní tělo souboru protokol.qmd (povinné hlavní sekce: '# Teoretický úvod', '# Metodika', '# Výsledky', '# Diskuze', '# Závěr').
 
-    KRITICKÁ PRAVIDLA PRO STRUKTURU (.qmd):
-    1. NIKDY na začátek dokumentu nepiš YAML hlavičku (žádné `---`, `title:`, `author:`)! Začni rovnou na prvním řádku nadpisem `# Teoretický úvod`.
-    2. Do dokumentu už NEPIŠ ŽÁDNÉ spustitelné bloky ```` ```{{python}} ````! Všechna vypočtená čísla z `processed/summary.json` už vidíš v promptu – vypiš souhrnnou tabulku v sekci '# Výsledky' přímo jako čistou Markdown tabulku (`| Sloupec 1 | Sloupec 2 |...`) a konkrétní čísla z ní rovnou dosaď přímo do textu v sekcích '# Diskuze' a '# Závěr'!
-    3. Grafy vlož v sekci '# Výsledky' přes Markdown: `![Popis grafu](processed/graf_nazev.pdf){{width=75%}}`. Mezi každými dvěma obrázky MUSÍ být vždy prázdný řádek (nový odstavec), jinak se v PDF překryjí vedle sebe!
-    4. Značku `[NEJISTOTA: ...]` použij MAXIMÁLNĚ 1x v celém dokumentu, a to pouze tehdy, pokud v zadání vysloveně chybí klíčový parametr. Nikdy nepoužívej více značek v jedné větě!
-    5. VKLÁDÁNÍ FOTOGRAFIÍ ZE SLOŽKY 'img/' (POKUD JSOU V KATALOGU OBRÁZKŮ):
-    - Pokud dostaneš 'KATALOG FOTOGRAFIÍ Z LABORATOŘE', musíš do dokumentu vložit VŠECHNY fotografie z katalogu v jejich přesném pořadí!
-    - Každou skupinu fotografií uveď podkapitolou (např. `## Příprava zařízení a materiálu`) a souvislým odborným odstavcem, ve kterém popíšeš prováděný krok a odkážeš se na číslo obrázku v závorce, např. `(Obr. 1)` nebo `viz Obr. 2`.
-    - Samotný obrázek vlož VŽDY na samostatný odstavec (s prázdným řádkem nad i pod!) přesně v tomto formátu:
-      `![Přesný text z pole caption bez prefixu Obr. X](cesta_z_pole_file){{width=62% fig-align="center"}}`
-    - NIKDY nepiš dovnitř hranatých závorek `![Obr. 1. ...]` slovo 'Obr. 1.', protože LaTeX ho tam doplňuje automaticky (vzniklo by zdvojené 'Obr. 1.: Obr. 1.')!
-    6. Pokud chceš v Python bloku vypsat delší text přes display(Markdown(...)), použij buď trojité uvozovky (rf\"\"\"...\"\"\"), nebo řádek nerozděluj Enterem uvnitř uvozovek – použij explicitní \n pro nový řádek.
-    {all_rules}"""
+        ===================================================================
+        1. KRITICKÁ PRAVIDLA PRO STRUKTURU A SYNTAXI (.qmd):
+        ===================================================================
+        - ŽÁDNÁ YAML HLAVIČKA: Nikdy na začátek dokumentu nepiš YAML hlavičku (žádné `---`, `title:`, `author:`). Začni rovnou na prvním řádku nadpisem `# Teoretický úvod`.
+        - ČISTÝ MARKDOWN BEZ PYTHON BLOKŮ: Do dokumentu už NEPIŠ ŽÁDNÉ spustitelné bloky ```` ```{{python}} ````! Všechna vypočtená čísla z `processed/summary.json` i popisy fotek z `processed/images_catalog.json` vidíš přímo v zadání – vypiš tabulku přímo jako čistou Markdown tabulku (`| Sloupec 1 | Sloupec 2 |...`) a konkrétní čísla z ní rovnou dosaď přímo do textu v sekcích '# Diskuze' a '# Závěr'.
+        - (Pojistka: Pokud bys z jakéhokoliv důvodu přesto použil Python blok s `display(Markdown(...))`, vždy použij trojité uvozovky `rf\"\"\"...\"\"\"` a nikdy nerozděluj jednořádkový řetězec klávesou Enter).
+        - ZNAČKA NEJISTOTY: Značku `[NEJISTOTA: ...]` použij MAXIMÁLNĚ 1x v celém dokumentu, a to pouze tehdy, pokud v podkladech vysloveně chybí klíčový parametr. Nikdy nepoužívej více značek v jedné větě!
+        - Pokud v souboru .qmd vytváříš spustitelný Python blok (```{{python}}) a používáš v něm display(...) nebo Markdown(...), na samém začátku tohoto bloku VŽDY uveď import: from IPython.display import display, Markdown.
+        ===================================================================
+        2. JAK PRACOVAT PODLE TYPU ÚLOHY (VARIANTA A / B / C):
+        ===================================================================
+        VARIANTA A) POUZE NUMERICKÁ DATA (máš `summary.json` a grafy `processed/*.pdf`, žádné fotky v `img/`):
+        - V sekci '# Metodika' popiš měřicí metodu a postup výpočtů.
+        - V sekci '# Výsledky' vypiš souhrnnou Markdown tabulku ze `summary.json` a vlož všechny vygenerované grafy z `processed/*.pdf`.
+        - V sekcích '# Diskuze' a '# Závěr' zhodnoť přesné číselné rozsahy a fyzikální souvislosti.
+
+        VARIANTA B) PRAKTICKÁ / FOTOGRAFICKÁ ÚLOHA (žádná číselná data v `data/`, ale máš KATALOG FOTOGRAFIÍ):
+        - NIKDY do textu nepiš, že soubor `processed/summary.json` nebyl nalezen nebo že chybí numerická data!
+        - V sekcích '# Metodika' a '# Výsledky' rozděl text do logických podkapitol (`## ...`) podle technologických kroků v zadání a v poli `sekce` z katalogu.
+        - Ke každému kroku napiš souvislý odborný popis činnosti (co přesně se na pracovišti dělo, jaké přístroje, chemikálie a parametry byly použity podle zadání a katalogu), v textu se odkaž na číslo obrázku v závorce `(Obr. X)` nebo `viz Obr. X` a pod odstavec vlož příslušné fotografie.
+        - V sekcích '# Diskuze' a '# Závěr' zhodnoť praktický průběh práce, kritické technologické kroky (např. nastavení přítlaku, teploty, přesnost bondování/pájení, kvalitu motivu) a navrhni možná vylepšení pro průmyslovou praxi.
+
+        VARIANTA C) KOMBINOVANÁ ÚLOHA (máš NUMERICKÁ DATA / GRAFY i KATALOG FOTOGRAFIÍ):
+        - V sekci '# Metodika' (případně v první části '# Výsledky') popiš praktický postup měření/výroby doplněný o všechny fotografie z katalogu s odkazy `(Obr. X)`.
+        - V sekci '# Výsledky' dále uveď souhrnnou Markdown tabulku naměřených/vypočtených hodnot ze `summary.json` a vlož všechny analytické grafy z `processed/*.pdf`.
+        - V sekcích '# Diskuze' a '# Závěr' propoj zhodnocení praktické realizace (z fotografií) s konkrétními naměřenými čísly z tabulky a grafů.
+
+        ===================================================================
+        3. STRIKTNÍ PRAVIDLA PRO VKLÁDÁNÍ GRAFŮ A FOTOGRAFIÍ:
+        ===================================================================
+        - Musíš vložit VŠECHNY vygenerované grafy (`processed/*.pdf`) a VŠECHNY fotografie z katalogu (`img/*`) v jejich přesném pořadí!
+        - Každý graf nebo fotografii vlož VŽDY na samostatný řádek s PRÁZDNÝM ŘÁDKEM NAD I POD (jinak se v PDF slijí vedle sebe a ztratí popisky!):
+        ![Přesný text popisku bez prefixu Obr. X](cesta/k/souboru){{width=65% fig-align="center"}}
+        - ZÁKAZ DUPLICITY ČÍSLOVÁNÍ: Dovnitř hranatých závorek `![...]` NIKDY nepiš prefix `Obr. 1.` ani obecné názvy jako `Fotografie 1`! LaTeX čísluje obrázky jako `Obr. X.` zcela automaticky. Vždy tam vlož čistý odborný text z pole `caption` z katalogu!
+        {all_rules}"""
         super().__init__(name="Quarto_Writer", system_message=sys_msg, config_list=config_list, max_tokens=8192)
 
-    def execute(self, zadani_text: str, computed_summary: str, generated_plots: list[str], output_path: Path) -> str:
+    def execute(self, zadani_text: str, computed_summary: str, generated_plots: list[str], images_catalog_str: str, output_path: Path) -> str:
         prompt = (
-            f"ZADÁNÍ ÚLOHY:\n{zadani_text}\n\n"
-            f"HOTOVÉ VÝSLEDKY VÝPOČTŮ (processed/summary.json):\n{computed_summary}\n\n"
-            f"VYGENEROVANÉ GRAFY K VLOŽENÍ:\n{generated_plots}\n\n"
-            f"Sestav kompletní návrh protokolu od '# Teoretický úvod' až po '# Závěr'."
+           f"ZADÁNÍ ÚLOHY (zadani.pdf):\n{zadani_text}\n\n"
+           f"VÝSLEDKY NUMERICKÝCH VÝPOČTŮ:\n{computed_summary}\n\n"
+           f"VYGENEROVANÉ GRAFY:\n{generated_plots}\n\n"
+           f"KATALOG FOTOGRAFIÍ Z LABORATOŘE (processed/images_catalog.json):\n{images_catalog_str}\n\n"
+           f"Sestav kompletní protokol od '# Teoretický úvod' až po '# Závěr'. "
+           f"Pokud katalog obsahuje fotografie, zapracuj VŠECHNY fotografie do podkapitol s odborným popisem postupu nad každou z nich a s přesným popiskem z pole 'caption'!"
         )
         draft_content = self.ask(prompt)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(draft_content)
-        print(f"  ✅ [Quarto_Writer] Návrh uložen do '{output_path.name}'.")
+        print(f" [Quarto_Writer] Návrh uložen do '{output_path.name}'.")
         return draft_content
 
 
@@ -208,29 +232,29 @@ class VisionCuratorAgent:
         catalog = []
         rules_str = "\n".join([f"- {r}" for r in task_rules])
 
-        print(f"  📸 [Vision_Curator] Nalezeno {len(image_files)} obrázků ve složce 'img/'. Analyzuji obsah...")
+        print(f" [Vision_Curator] Nalezeno {len(image_files)} obrázků ve složce 'img/'. Analyzuji obsah...")
 
         for idx, img_path in enumerate(image_files, start=1):
             b64_img = self._prepare_and_encode_image(img_path)
             filename = os.path.basename(img_path)
 
             prompt = f"""Jsi odborný asistent v laboratořích VUT FEKT.
-        Analyzuješ fotografii č. {idx} (soubor '{filename}') pro laboratorní protokol.
+            Analyzuješ fotografii č. {idx} (soubor '{filename}') pro laboratorní protokol.
 
-        KONTEXT ZE ZADÁNÍ ÚLOHY:
-        {zadani_text[:2500]}
+            KONTEXT A POSTUP ZE ZADÁNÍ ÚLOHY (zadani.pdf):
+            {zadani_text[:4000]}
 
-        SPECIFICKÁ PRAVIDLA ÚLOHY:
-        {rules_str}
+            SPECIFICKÁ PRAVIDLA ÚLOHY:
+            {rules_str}
 
-        Prohlédni si fotografii (všímej si přístrojů, displejů, hodnot, chemikálií a prováděné činnosti) a vrať ČISTÝ JSON objekt (bez ```json bloků) s těmito klíči:
-        {{
-          "obr_cislo": {idx},
-          "file": "{img_path}",
-          "sekce": "Název logické podkapitoly, kam fotka v postupu patří (např. Příprava zařízení a materiálu, Osvit síta, Optická kontrola apod.)",
-          "caption": "Stručný, přesný odborný popisek pod obrázek (BEZ prefixu 'Obr. X.', ten doplní LaTeX sám! Např.: 'Detail displeje sušičky zobrazující průběh procesu sušení a teploty')",
-          "detailni_popis": "Co přesně je na fotce vidět včetně případných přečtených čísel z displeje/mikroskopu (pro autora textu protokolu)."
-        }}"""
+            Prohlédni si fotografii, propoj to, co na ní vidíš (přístroje, displeje, hodnoty, nástroje, chemikálie), s postupem v zadání a vrať ČISTÝ JSON objekt (bez ```json bloků) s těmito klíči:
+            {{
+              "obr_cislo": {idx},
+              "file": "{img_path}",
+              "sekce": "Název technologického kroku ze zadání (např. 1. Dělení substrátů, 2. Lepení čipů, 3. Kontaktování - Wire Bonding, 4. Zakapávání čipů, 5. Pájení a testování)",
+              "caption": "Stručný, přesný odborný popisek pod obrázek (BEZ prefixu 'Obr. X.', např.: 'Detail ultrazvukového kontaktování čipu zlatým drátkem')",
+              "postup_cinnosti": "2 až 3 odborné věty v trpném rodě (nebo 1. os. mn. č.) popisující, jaká přesně činnost podle zadání na této fotografii probíhá, včetně konkrétních parametrů/hodnot viditelných na fotce a odkazu '(Obr. {idx})'."
+            }}"""
 
             try:
                 response = self.client.chat.completions.create(
@@ -252,7 +276,7 @@ class VisionCuratorAgent:
                 item["obr_cislo"] = idx
                 item["file"] = img_path
             except Exception as e:
-                print(f"  ⚠️ [Vision_Curator] Záložní popisek pro {filename} ({e})")
+                print(f" [Vision_Curator] Záložní popisek pro {filename} ({e})")
                 clean_name = os.path.splitext(filename)[0].replace("_", " ")
                 item = {
                     "obr_cislo": idx,
