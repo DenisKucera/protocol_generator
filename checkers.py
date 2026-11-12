@@ -1,6 +1,7 @@
 import re
 import json
 import os
+import textwrap
 from pathlib import Path
 
 class MaterialVerifier:
@@ -168,6 +169,8 @@ class QualityControl:
 
         # Odstranění případných vícenásobných prázdných řádků (max 1 prázdný řádek mezi odstavci)
         text = re.sub(r"\n{3,}", "\n\n", text)
+        # Zalomení dlouhých řádků v odstavcích pro snadnou ruční editaci .qmd souboru
+        text = self._wrap_prose_lines(text, width=95)
         return text.strip() + "\n"
 
     def evaluate_qmd_scoreboard(self, qmd_text: str, verified_plan: dict) -> tuple[int, list[str]]:
@@ -327,3 +330,52 @@ class QualityControl:
         if annotate_fn:
             best_qmd = annotate_fn(best_qmd, final_penalties)
         return self.sanitize_output(best_qmd)
+    
+    def _wrap_prose_lines(self, text: str, width: int = 95) -> str:
+        """
+        Zalomí dlouhé odstavce běžného textu na čitelnou šířku (cca 95 znaků),
+        aniž by poškodil nadpisy, obrázky, tabulky, Python bloky nebo blokové rovnice.
+        """
+        wrapped_lines = []
+        in_code_block = False
+        in_math_block = False
+
+        for line in text.splitlines():
+            stripped = line.strip()
+
+            # Sledování spustitelných bloků ```{python} ... ```
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                wrapped_lines.append(line)
+                continue
+
+            # Sledování blokové matematiky $$ ... $$
+            if stripped.startswith("$$") and stripped.endswith("$$") and len(stripped) > 2:
+                wrapped_lines.append(line)
+                continue
+            if stripped == "$$":
+                in_math_block = not in_math_block
+                wrapped_lines.append(line)
+                continue
+
+            # Pokud jsme uvnitř kódu/matematiky nebo jde o speciální Markdown prvek -> nezalamovat
+            is_special_md = (
+                not stripped
+                or stripped.startswith(("#", "![", "|", ">", "---"))
+                or re.match(r"^(?:[\*\-]|\d+\.)\s+", stripped)
+            )
+
+            if in_code_block or in_math_block or is_special_md or len(line) <= width:
+                wrapped_lines.append(line)
+            else:
+                # Zalomí běžný odstavec pouze v mezerách mezi slovy (neroztrhne URL ani vzorce bez mezer)
+                wrapped_lines.append(
+                    textwrap.fill(
+                        stripped,
+                        width=width,
+                        break_long_words=False,
+                        break_on_hyphens=False,
+                    )
+                )
+
+        return "\n".join(wrapped_lines)
