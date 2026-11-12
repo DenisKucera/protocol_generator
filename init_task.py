@@ -93,11 +93,11 @@ if __name__ == "__main__":
 
     print(f"\n Úloha byla úspěšně vytvořena ve složce: {task_dir}")
     print("Další kroky:")
-    print(f"  1. Vlož naměřená data (.xlsx / .csv) do '{task_dir}\data'")
-    print(f"  2. Vlož obrázky (.jpg, .png,...) do '{task_dir}\img'")
-    print(f"  3. Vlož zadání do '{task_dir}\zadani.pdf'")
-    print(f"  4. Uprav specifická pravidla v '{task_dir}\task_config.json'")
-    print(f"  5. Spusť generování příkazem: python {task_dir}\run_task.py")
+    print(f"  1. Vlož naměřená data (.xlsx / .csv) do '{task_dir}/data'")
+    print(f"  2. Vlož obrázky (.jpg, .png,...) do '{task_dir}/img'")
+    print(f"  3. Vlož zadání do '{task_dir}/zadani.pdf'")
+    print(f"  4. Uprav specifická pravidla v '{task_dir}/task_config.json'")
+    print(f"  5. Spusť generování příkazem: python {task_dir}/run_task.py")
 
 if __name__ == "__main__":
     init_new_task()

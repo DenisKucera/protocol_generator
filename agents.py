@@ -7,6 +7,7 @@ import json
 import easyocr
 import litellm
 import warnings
+import numpy as np
 from pathlib import Path
 from litellm import completion
 from dotenv import load_dotenv
@@ -15,6 +16,8 @@ from PIL import Image, ImageOps
 from io import BytesIO
 #from openai import OpenAI
 litellm.drop_params = True
+litellm.drop_params = True
+litellm.suppress_debug_info = True
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 class BaseLabAgent:
     """Base class pro všechny LLM agenty."""
@@ -326,14 +329,22 @@ class VisionCuratorAgent(BaseLabAgent):
         self.forbidden_words = forbidden_words or []
         self.reader = easyocr.Reader(["cs", "en"], gpu=False) if use_ocr else None
 
-    def _extract_ocr_hints(self, img_path: str) -> str:
-        """Lokálně (zdarma) přečte texty na displejích a štítcích přístrojů."""
+    def _extract_ocr_hints(self, img_path: str, max_size: int = 1024) -> str:
+        """Lokálně přečte texty na displejích a štítcích. Nikdy neshodí běh při chybě OpenCV."""
         if not self.reader:
             return ""
-        results = self.reader.readtext(img_path, detail=0)
-        # Odfiltrujeme náhodný šum (1-2 znaky)
-        clean_texts = [t.strip() for t in results if len(t.strip()) > 2]
-        return ", ".join(clean_texts)
+        try:
+            with Image.open(img_path) as img:
+                img = ImageOps.exif_transpose(img).convert("RGB")
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                img_np = np.array(img)
+
+            results = self.reader.readtext(img_np, detail=0)
+            clean_texts = [t.strip() for t in results if len(t.strip()) > 2]
+            return ", ".join(clean_texts)
+        except Exception as e:
+            print(f" [OCR] Přeskakuji OCR pro {os.path.basename(img_path)}: {e}")
+            return ""
 
     #@staticmethod
     def _prepare_and_encode_image(self, img_path: str, max_size: int = 1024) -> str:
@@ -408,9 +419,12 @@ class VisionCuratorAgent(BaseLabAgent):
                 raw_text = response.choices[0].message.content.strip()
                 raw_json = self.strip_code_fences(raw_text, tag="json")
                 item = json.loads(raw_json)
-                # ESSENTIAL POJISTKA: Vždy vynutíme skutečné pořadové číslo a reálnou cestu k souboru
+                item = json.loads(raw_json)
                 item["obr_cislo"] = idx
                 item["file"] = img_path
+                # Pojistka proti JSON null ("sekce": null)
+                if not item.get("sekce"):
+                    item["sekce"] = verified_sections[0] if verified_sections else "Praktická část"
             except Exception as e:
                 print(f"  [Vision_Curator] Záložní popisek pro {filename} ({e})")
                 clean_name = os.path.splitext(filename)[0].replace("_", " ")
