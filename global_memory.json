@@ -5,7 +5,7 @@
     4
   ],
   "lessons_learned": [
-    "1. Načítání výsledků v Quartu: V souboru protokol.qmd načítej připravenou souhrnnou tabulku VÝHRADNĚ ze souboru 'processed/summary.json' pomocí pd.read_json('processed/summary.json').",
+    "1. Vypisování výsledků: Do souboru protokol.qmd NIKDY nevkládej Python bloky s pd.read_json('processed/summary.json'), pokud v úloze nejsou numerická data! Veškeré tabulky a hodnoty vypisuj přímo jako čistý Markdown text a Markdown tabulku.",
     "2. Vícenásobná data: Pokud má Excel více listů, načti je přes `pd.read_excel('data/...', sheet_name=None)` a proiteruj v cyklu `for nazev, df in sheets.items():`.",
     "3. Quarto a Python výstupy: Každý spustitelný Python blok musí začínat magickým komentářem `#| results: asis` a výstupy formátuj výhradně přes `display(Markdown(...))`. Zakázáno je obyčejné `display(df)` (použij `df.to_markdown(index=False)`).",
     "4. Zákaz f-stringů mimo Python: V běžném Markdown textu mimo Python bloky nepoužívej f-stringy (žádné `{promenna}`).",
