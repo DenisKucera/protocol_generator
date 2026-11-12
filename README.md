@@ -1,7 +1,6 @@
 # Generator protokolu s vyuzitim LLM pro studenty VUT FEKT
 
 Pokus o multi-agentní systém v Pythonu pro automatizované zpracování laboratorních dat, analýzu fotodokumentace a generování kompletních laboratorních protokolů v typografickém systému **Quarto (`.qmd` $\rightarrow$ LaTeX $\rightarrow$ `.pdf`)**.
-
 Architektura využívá model **Plan-and-Execute** s deterministickou verifikací v Pythonu (`MaterialVerifier` a `QualityControl` se Scoreboardem) a univerzální rozhraní **LiteLLM**, které umožňuje kombinovat modely od **Google Gemini, Groq, OpenAI a Anthropic**.
 **Momentálně jsou otestované pouze Groq a Gemini!**
 ---
